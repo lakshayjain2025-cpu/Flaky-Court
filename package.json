@@ -1,0 +1,29 @@
+{
+  "name": "flaky-court",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lakshayjain2025-cpu/Flaky-Court.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/lakshayjain2025-cpu/Flaky-Court/issues"
+  },
+  "homepage": "https://github.com/lakshayjain2025-cpu/Flaky-Court#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "playwright": "^1.63.0"
+  },
+  "dependencies": {
+    "diff": "^9.0.0",
+    "dotenv": "^17.4.2"
+  }
+}
