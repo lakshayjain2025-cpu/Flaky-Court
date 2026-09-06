@@ -3,7 +3,8 @@ const fs = require('fs');
 const path = require('path');
 
 async function diagnose() {
-  const resultsPath = path.join(__dirname, 'results.json');
+    const inputFile = process.argv[2] || 'results.json';
+    const resultsPath = path.join(__dirname, inputFile);
   if (!fs.existsSync(resultsPath)) {
     console.error('Error: results.json not found. Run stress-test.js first.');
     process.exit(1);
@@ -78,8 +79,17 @@ Respond with ONLY raw JSON (no markdown fences, no formatting like \`\`\`json, n
     cleaned = cleaned.slice(start, end + 1);
   }
 
-  const diagnosis = JSON.parse(cleaned);
+    const diagnosis = JSON.parse(cleaned);
   console.log(diagnosis);
+
+  const outputFile = process.argv[3] || 'diagnosis-output.json';
+  fs.writeFileSync(
+    path.join(__dirname, outputFile),
+    JSON.stringify(diagnosis, null, 2),
+    'utf8'
+  );
+  console.log(`Diagnosis saved to ${outputFile}`);
+
   return diagnosis;
 }
 

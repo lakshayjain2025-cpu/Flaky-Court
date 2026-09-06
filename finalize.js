@@ -1,42 +1,32 @@
 const fs = require('fs');
 const path = require('path');
 
-const flakyTestPath = path.join(__dirname, 'flaky.test.js');
-const fixedTestPath = path.join(__dirname, 'flaky-fixed.test.js');
+const beforePath = path.join(__dirname, 'before-results.json');
+const afterPath = path.join(__dirname, 'after-results.json');
+const diagnosisPath = path.join(__dirname, 'diagnosis-output.json');
 
-const flakyContent = fs.readFileSync(flakyTestPath, 'utf8');
-const fixedContent = fs.readFileSync(fixedTestPath, 'utf8');
-
-// Extract the racy assertion lines from flaky.test.js
-const originalCode = flakyContent
-  .split(/\r?\n/)
-  .filter(line => line.includes('page.textContent') || line.includes('expect(text)'))
-  .join('\n');
-
-// Extract the corrected assertion line from flaky-fixed.test.js
-const fixedCode = fixedContent
-  .split(/\r?\n/)
-  .filter(line => line.includes('expect(page.locator'))
-  .join('\n');
+const before = JSON.parse(fs.readFileSync(beforePath, 'utf8'));
+const after = JSON.parse(fs.readFileSync(afterPath, 'utf8'));
+const diagnosis = JSON.parse(fs.readFileSync(diagnosisPath, 'utf8'));
 
 const results = {
-  testName: "flaky.test.js",
-  flakeRateBefore: 0.98,
-  totalRunsBefore: 50,
-  failuresBefore: 49,
+  testName: before.targetTest,
+  flakeRateBefore: before.flakeRate,
+  totalRunsBefore: before.totalRuns,
+  failuresBefore: before.failures,
+  runResults: before.runResults,
   diagnosis: {
-    cause: "RACE_CONDITION",
-    explanation: "The test retrieves the text of '#result' immediately after clicking '#loadBtn' using 'page.textContent()', which does not wait for any asynchronous operations or DOM updates to finish. Replacing it with Playwright's web-first auto-retrying assertion 'toHaveText' ensures the test waits until the expected text appears."
+    cause: diagnosis.cause,
+    explanation: diagnosis.explanation,
   },
-  originalCode,
-  fixedCode,
-  flakeRateAfter: 0,
-  totalRunsAfter: 50,
-  failuresAfter: 0
+  originalCode: before.testCode,
+  fixedCode: diagnosis.fixedCode,
+  flakeRateAfter: after.flakeRate,
+  totalRunsAfter: after.totalRuns,
+  failuresAfter: after.failures,
 };
 
 const resultsPath = path.join(__dirname, 'results.json');
 fs.writeFileSync(resultsPath, JSON.stringify(results, null, 2), 'utf8');
-
+console.log('Final combined results written to results.json');
 console.log(JSON.stringify(results, null, 2));
-

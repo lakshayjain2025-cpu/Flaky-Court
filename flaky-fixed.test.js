@@ -5,4 +5,3 @@ test('loads data on button click', async ({ page }) => {
   await page.click('#loadBtn');
   await expect(page.locator('#result')).toHaveText('Data Loaded');
 });
-
