@@ -39,7 +39,7 @@ function App() {
     await fetch('http://localhost:4000/run-stress-test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ testFile: 'uploaded-test.js', outputFile: 'before-results.json', phase: 'before' }),
+      body: JSON.stringify({ testFile: 'uploaded.test.js', outputFile: 'before-results.json', phase: 'before' }),
     });
 
     setStatus('Diagnosing the failure with AI…');

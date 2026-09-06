@@ -82,7 +82,7 @@ app.post('/run-finalize', (req, res) => {
   });
 });
 app.post('/upload-test', upload.single('testFile'), (req, res) => {
-  res.json({ success: true, filename: 'uploaded-test.js' });
+  res.json({ success: true, filename: 'uploaded.test.js' });
 });
 
 app.get('/download-fixed', (req, res) => {

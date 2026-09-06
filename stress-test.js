@@ -27,9 +27,13 @@ async function sendUpdate(payload) {
 async function runLoop() {
   for (let i = 1; i <= TOTAL_RUNS; i++) {
     try {
-      execSync(`npx playwright test ${targetTest}`, {
+      execSync('npx playwright test', {
         encoding: 'utf8',
         stdio: 'pipe',
+        env: {
+          ...process.env,
+          PLAYWRIGHT_TEST_FILE: targetTest,
+        },
       });
       passes++;
       runResults.push(1);
