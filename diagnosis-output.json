@@ -1,5 +1,5 @@
 {
-  "cause": "RACE_CONDITION",
-  "explanation": "The test uses page.textContent() immediately after clicking the button, which retrieves the DOM text at that exact millisecond without waiting for asynchronous data fetching or rendering to complete. Using Playwright's auto-retrying locator assertion page.locator().toHaveText() retries until the expected text appears or times out.",
-  "fixedCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data on button click', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  await expect(page.locator('#result')).toHaveText('Data Loaded');\n});"
+  "cause": "TEST_PATTERN_MISMATCH",
+  "explanation": "The test runner failed to execute because the file path or test filter argument passed to the CLI did not match any test files, often caused by unescaped special characters (like $ or *) or an incorrect file naming pattern.",
+  "fixedCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data reliably', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  await expect(page.locator('#result')).toHaveText('Data Loaded');\n});"
 }

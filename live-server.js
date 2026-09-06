@@ -6,7 +6,7 @@ const path = require('path');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, __dirname),
-  filename: (req, file, cb) => cb(null, 'uploaded-test.js'),
+  filename: (req, file, cb) => cb(null, 'uploaded.test.js'),
 });
 const upload = multer({ storage });
 
@@ -39,13 +39,28 @@ app.post('/update', (req, res) => {
   res.sendStatus(200);
 });
 app.post('/run-stress-test', (req, res) => {
-  const { testFile, outputFile } = req.body;
-  exec(`node stress-test.js ${testFile} ${outputFile || 'results.json'}`, (err, stdout, stderr) => {
-    if (err) {
+  const { testFile, outputFile, phase } = req.body;
+  exec(`node stress-test.js ${testFile} ${outputFile || 'results.json'} ${phase || 'before'}`, (err, stdout, stderr) => {    if (err) {
       return res.status(500).json({ error: stderr || err.message });
     }
     res.json({ success: true, output: stdout });
   });
+});
+app.post('/apply-fix', (req, res) => {
+  const fs = require('fs');
+  try {
+    const diagnosisPath = path.join(__dirname, 'diagnosis-output.json');
+    const diagnosis = JSON.parse(fs.readFileSync(diagnosisPath, 'utf8'));
+
+    if (!diagnosis.fixedCode) {
+      return res.status(400).json({ error: 'No fixedCode found in diagnosis output' });
+    }
+
+    fs.writeFileSync(path.join(__dirname, 'fixed.test.js'), diagnosis.fixedCode, 'utf8');
+    res.json({ success: true, filename: 'fixed.test.js' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post('/run-diagnose', (req, res) => {
@@ -72,11 +87,11 @@ app.post('/upload-test', upload.single('testFile'), (req, res) => {
 
 app.get('/download-fixed', (req, res) => {
   const fs = require('fs');
-  const filePath = path.join(__dirname, 'flaky-fixed.test.js');
+  const filePath = path.join(__dirname, 'fixed.test.js');
   if (!fs.existsSync(filePath)) {
     return res.status(404).json({ error: 'No fixed file available yet' });
   }
-  res.download(filePath, 'fixed-test.js');
+  res.download(filePath, 'fixed.test.js');
 });
 
 app.get('/latest-results', (req, res) => {

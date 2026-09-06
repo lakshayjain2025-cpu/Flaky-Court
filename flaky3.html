@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head><title>Timing Demo</title></head>
+<body>
+  <button id="submitBtn">Submit</button>
+  <div id="status"></div>
+
+  <script>
+    document.getElementById('submitBtn').addEventListener('click', () => {
+      // Simulates variable server response time (50ms-250ms)
+      const responseTime = 50 + Math.random() * 200;
+      setTimeout(() => {
+        document.getElementById('status').innerText = 'Success';
+      }, responseTime);
+    });
+  </script>
+</body>
+</html>

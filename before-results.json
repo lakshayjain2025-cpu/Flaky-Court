@@ -1,7 +1,7 @@
 {
   "targetTest": "uploaded-test.js",
-  "testCode": "const { test, expect } = require('@playwright/test');\r\n\r\ntest('loads data on button click', async ({ page }) => {\r\n  await page.goto('http://localhost:8080/flaky.html');\r\n  await page.click('#loadBtn');\r\n  const text = await page.textContent('#result');\r\n  expect(text).toBe('Data Loaded');\r\n});\r\n\r\n",
-  "sourceCode": "const { test, expect } = require('@playwright/test');\r\n\r\ntest('loads data on button click', async ({ page }) => {\r\n  await page.goto('http://localhost:8080/flaky.html');\r\n  await page.click('#loadBtn');\r\n  const text = await page.textContent('#result');\r\n  expect(text).toBe('Data Loaded');\r\n});\r\n\r\n",
+  "testCode": "const { test, expect } = require('@playwright/test');\r\n\r\ntest('loads data reliably', async ({ page }) => {\r\n  await page.goto('http://localhost:8080/flaky.html');\r\n  await page.click('#loadBtn');\r\n  await expect(page.locator('#result')).toHaveText('Data Loaded');\r\n});",
+  "sourceCode": "const { test, expect } = require('@playwright/test');\r\n\r\ntest('loads data reliably', async ({ page }) => {\r\n  await page.goto('http://localhost:8080/flaky.html');\r\n  await page.click('#loadBtn');\r\n  await expect(page.locator('#result')).toHaveText('Data Loaded');\r\n});",
   "sampleFailure": "Error: No tests found.\nMake sure that arguments are regular expressions matching test files.\nYou may need to escape symbols like \"$\" or \"*\" and quote the arguments.",
   "totalRuns": 50,
   "passes": 0,

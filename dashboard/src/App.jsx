@@ -31,7 +31,7 @@ function App() {
     setLiveRun(null);
   }
 
-  async function runFullPipeline() {
+    async function runFullPipeline() {
     setLoading(true);
     setLiveRun(null);
 
@@ -39,7 +39,7 @@ function App() {
     await fetch('http://localhost:4000/run-stress-test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ testFile: 'uploaded-test.js', outputFile: 'before-results.json' }),
+      body: JSON.stringify({ testFile: 'uploaded-test.js', outputFile: 'before-results.json', phase: 'before' }),
     });
 
     setStatus('Diagnosing the failure with AI…');
@@ -49,11 +49,14 @@ function App() {
       body: JSON.stringify({ inputFile: 'before-results.json', outputFile: 'diagnosis-output.json' }),
     });
 
+    setStatus('Writing the AI-generated fix…');
+    await fetch('http://localhost:4000/apply-fix', { method: 'POST' });
+
     setStatus('Verifying the fix — 50 more runs…');
     await fetch('http://localhost:4000/run-stress-test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ testFile: 'flaky-fixed.test.js', outputFile: 'after-results.json' }),
+      body: JSON.stringify({ testFile: 'fixed.test.js', outputFile: 'after-results.json', phase: 'after' }),
     });
 
     setStatus('Finalizing the verdict…');
@@ -117,7 +120,7 @@ function App() {
       {liveRun && (
         <section className="grid-block live">
           <div className="grid-header">
-            <h4>live — run {liveRun.currentRun} of {liveRun.totalRuns}</h4>
+                  <h4>live — {liveRun.phase === 'after' ? 'verifying fix' : 'testing original'} — run {liveRun.currentRun} of {liveRun.totalRuns}</h4>
             <span className="grid-count">
               {liveRun.runResults.filter(r => r).length} pass / {liveRun.runResults.filter(r => !r).length} fail
             </span>

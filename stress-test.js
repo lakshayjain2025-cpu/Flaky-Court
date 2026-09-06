@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const targetTest = process.argv[2] || 'flaky.test.js';
+const phase = process.argv[4] || 'before';
 const TOTAL_RUNS = 50;
 let passes = 0;
 let failures = 0;
@@ -43,7 +44,7 @@ async function runLoop() {
         sampleFailure = (stdout || stderr || error.message).trim();
       }
     }
-    await sendUpdate({ currentRun: i, totalRuns: TOTAL_RUNS, runResults });
+        await sendUpdate({ currentRun: i, totalRuns: TOTAL_RUNS, runResults, phase });
   }
 }
 
