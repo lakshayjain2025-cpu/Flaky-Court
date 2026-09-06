@@ -1,16 +1,16 @@
 {
   "testName": "flaky.test.js",
-  "flakeRateBefore": 0.24,
+  "flakeRateBefore": 0.98,
   "totalRunsBefore": 50,
-  "failuresBefore": 12,
-  "runResults": [1,1,1,0,1,1,1,1,0,1,1,1,1,1,1,0,1,1,1,1,1,1,1,1,1,1,0,1,1,1,1,1,1,1,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+  "failuresBefore": 49,
+  "runResults": [0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
   "diagnosis": {
     "cause": "RACE_CONDITION",
-    "explanation": "The test asserts on the result text immediately after clicking the button, but the page updates the DOM after a random delay (0-300ms). Since the assertion runs before the update completes, the test fails whenever the delay exceeds the assertion's timing window."
+    "explanation": "The test retrieves the text of '#result' immediately after clicking '#loadBtn' using 'page.textContent()', which does not wait for any asynchronous operations or DOM updates to finish. Replacing it with Playwright's web-first auto-retrying assertion 'toHaveText' ensures the test waits until the expected text appears."
   },
-  "originalCode": "await page.click('#loadBtn');\nconst text = await page.textContent('#result');\nexpect(text).toBe('Data Loaded');",
-  "fixedCode": "await page.click('#loadBtn');\nawait expect(page.locator('#result')).toHaveText('Data Loaded', { timeout: 2000 });",
-  "flakeRateAfter": 0.0,
+  "originalCode": "  const text = await page.textContent('#result');\n  expect(text).toBe('Data Loaded');",
+  "fixedCode": "  await expect(page.locator('#result')).toHaveText('Data Loaded');",
+  "flakeRateAfter": 0,
   "totalRunsAfter": 50,
   "failuresAfter": 0
 }

@@ -33,6 +33,9 @@ function App() {
           <p>{data.failuresAfter} failures / {data.totalRunsAfter} runs</p>
         </div>
       </div>
+	 {data.flakeRateAfter === 0 && (
+        <p className="verified-badge">✓ Verified: 0% Flake Rate over {data.totalRunsAfter} runs</p>
+      )}
 
       <div className="diagnosis">
         <h3>AI Diagnosis: {data.diagnosis.cause}</h3>

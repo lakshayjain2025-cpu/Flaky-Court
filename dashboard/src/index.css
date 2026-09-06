@@ -121,3 +121,9 @@ h2 {
 .dot.fail {
   background: #ef4444;
 }
+.verified-badge {
+  text-align: center;
+  color: #22c55e;
+  font-weight: bold;
+  margin-bottom: 32px;
+}
