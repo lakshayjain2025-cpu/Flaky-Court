@@ -3,12 +3,28 @@ import './App.css';
 
 function App() {
   const [data, setData] = useState(null);
+  const [liveRun, setLiveRun] = useState(null);
 
   useEffect(() => {
     fetch('/results.json')
       .then((res) => res.json())
       .then((json) => setData(json))
       .catch((err) => console.error('Failed to load results:', err));
+  }, []);
+
+  useEffect(() => {
+    const eventSource = new EventSource('http://localhost:4000/stream');
+
+    eventSource.onmessage = (event) => {
+      const update = JSON.parse(event.data);
+      setLiveRun(update);
+    };
+
+    eventSource.onerror = () => {
+      // connection issue, fail silently
+    };
+
+    return () => eventSource.close();
   }, []);
 
   if (!data) {
@@ -26,14 +42,14 @@ function App() {
           <p className="flake-rate">{(data.flakeRateBefore * 100).toFixed(0)}%</p>
           <p>{data.failuresBefore} failures / {data.totalRunsBefore} runs</p>
         </div>
-
         <div className="stat-card after">
           <h3>After</h3>
           <p className="flake-rate">{(data.flakeRateAfter * 100).toFixed(0)}%</p>
           <p>{data.failuresAfter} failures / {data.totalRunsAfter} runs</p>
         </div>
       </div>
-	 {data.flakeRateAfter === 0 && (
+
+      {data.flakeRateAfter === 0 && (
         <p className="verified-badge">✓ Verified: 0% Flake Rate over {data.totalRunsAfter} runs</p>
       )}
 
@@ -42,8 +58,19 @@ function App() {
         <p>{data.diagnosis.explanation}</p>
       </div>
 
+      {liveRun && (
+        <div className="run-grid live">
+          <h4>🔴 LIVE: Run {liveRun.currentRun}/{liveRun.totalRuns}</h4>
+          <div className="dots">
+            {liveRun.runResults.map((result, i) => (
+              <div key={i} className={`dot ${result ? 'pass' : 'fail'}`}></div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="run-grid">
-        <h4>50-Run Stress Test</h4>
+        <h4>50-Run Stress Test (Last Completed Result)</h4>
         <div className="dots">
           {data.runResults.map((result, i) => (
             <div key={i} className={`dot ${result ? 'pass' : 'fail'}`}></div>

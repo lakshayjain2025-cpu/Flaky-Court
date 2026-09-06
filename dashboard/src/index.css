@@ -127,3 +127,6 @@ h2 {
   font-weight: bold;
   margin-bottom: 32px;
 }
+.run-grid.live h4 {
+  color: #ef4444;
+}
