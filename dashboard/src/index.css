@@ -270,7 +270,10 @@ body {
   width: 13px;
   height: 13px;
   border-radius: 3px;
-  opacity: 0;
+  opacity: 1;
+}
+
+.dot.enter {
   animation: dot-in 0.22s ease forwards;
 }
 

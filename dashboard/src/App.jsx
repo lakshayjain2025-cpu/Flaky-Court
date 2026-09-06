@@ -117,7 +117,7 @@ function App() {
         </div>
       </section>
 
-      {liveRun && (
+      {liveRun && loading && (
         <section className="grid-block live">
           <div className="grid-header">
                   <h4>live — {liveRun.phase === 'after' ? 'verifying fix' : 'testing original'} — run {liveRun.currentRun} of {liveRun.totalRuns}</h4>
@@ -127,7 +127,10 @@ function App() {
           </div>
           <div className="dots">
             {liveRun.runResults.map((result, i) => (
-              <span key={i} className={`dot ${result ? 'pass' : 'fail'}`} style={{ animationDelay: `${i * 12}ms` }} />
+              <span
+                key={i}
+                className={`dot ${result ? 'pass' : 'fail'}${i === liveRun.runResults.length - 1 ? ' enter' : ''}`}
+              />
             ))}
           </div>
         </section>
