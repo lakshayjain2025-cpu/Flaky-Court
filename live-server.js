@@ -1,5 +1,14 @@
+const { exec } = require('child_process');
 const express = require('express');
 const cors = require('cors');
+const multer = require('multer');
+const path = require('path');
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, __dirname),
+  filename: (req, file, cb) => cb(null, 'uploaded-test.js'),
+});
+const upload = multer({ storage });
 
 const app = express();
 app.use(cors());
@@ -29,7 +38,57 @@ app.post('/update', (req, res) => {
   });
   res.sendStatus(200);
 });
+app.post('/run-stress-test', (req, res) => {
+  const { testFile, outputFile } = req.body;
+  exec(`node stress-test.js ${testFile} ${outputFile || 'results.json'}`, (err, stdout, stderr) => {
+    if (err) {
+      return res.status(500).json({ error: stderr || err.message });
+    }
+    res.json({ success: true, output: stdout });
+  });
+});
 
+app.post('/run-diagnose', (req, res) => {
+  const { inputFile, outputFile } = req.body;
+  exec(`node diagnose.js ${inputFile || 'results.json'} ${outputFile || 'diagnosis-output.json'}`, (err, stdout, stderr) => {
+    if (err) {
+      return res.status(500).json({ error: stderr || err.message });
+    }
+    res.json({ success: true, output: stdout });
+  });
+});
+
+app.post('/run-finalize', (req, res) => {
+  exec(`node finalize.js`, (err, stdout, stderr) => {
+    if (err) {
+      return res.status(500).json({ error: stderr || err.message });
+    }
+    res.json({ success: true, output: stdout });
+  });
+});
+app.post('/upload-test', upload.single('testFile'), (req, res) => {
+  res.json({ success: true, filename: 'uploaded-test.js' });
+});
+
+app.get('/download-fixed', (req, res) => {
+  const fs = require('fs');
+  const filePath = path.join(__dirname, 'flaky-fixed.test.js');
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'No fixed file available yet' });
+  }
+  res.download(filePath, 'fixed-test.js');
+});
+
+app.get('/latest-results', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  try {
+    const data = fs.readFileSync(path.join(__dirname, 'results.json'), 'utf8');
+    res.json(JSON.parse(data));
+  } catch (e) {
+    res.status(404).json({ error: 'results.json not found' });
+  }
+});
 const PORT = 4000;
 app.listen(PORT, () => {
   console.log(`Live server running on http://localhost:${PORT}`);

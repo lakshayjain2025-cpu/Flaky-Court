@@ -1,5 +1,5 @@
 {
   "cause": "RACE_CONDITION",
-  "explanation": "The test reads the element's text immediately after clicking the button using `page.textContent()`, which does not wait for asynchronous state or UI updates. As a result, the assertion executes before the data has finished loading into `#result`.",
+  "explanation": "The test uses page.textContent() immediately after clicking the button, which retrieves the DOM text at that exact millisecond without waiting for asynchronous data fetching or rendering to complete. Using Playwright's auto-retrying locator assertion page.locator().toHaveText() retries until the expected text appears or times out.",
   "fixedCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data on button click', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  await expect(page.locator('#result')).toHaveText('Data Loaded');\n});"
 }
