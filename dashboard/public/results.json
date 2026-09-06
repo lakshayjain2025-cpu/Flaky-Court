@@ -1,0 +1,16 @@
+{
+  "testName": "flaky.test.js",
+  "flakeRateBefore": 0.24,
+  "totalRunsBefore": 50,
+  "failuresBefore": 12,
+  "runResults": [1,1,1,0,1,1,1,1,0,1,1,1,1,1,1,0,1,1,1,1,1,1,1,1,1,1,0,1,1,1,1,1,1,1,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+  "diagnosis": {
+    "cause": "RACE_CONDITION",
+    "explanation": "The test asserts on the result text immediately after clicking the button, but the page updates the DOM after a random delay (0-300ms). Since the assertion runs before the update completes, the test fails whenever the delay exceeds the assertion's timing window."
+  },
+  "originalCode": "await page.click('#loadBtn');\nconst text = await page.textContent('#result');\nexpect(text).toBe('Data Loaded');",
+  "fixedCode": "await page.click('#loadBtn');\nawait expect(page.locator('#result')).toHaveText('Data Loaded', { timeout: 2000 });",
+  "flakeRateAfter": 0.0,
+  "totalRunsAfter": 50,
+  "failuresAfter": 0
+}
