@@ -1,9 +1,9 @@
 const { test, expect } = require('@playwright/test');
 
-test('loads data on button click', async ({ page }) => {
-  await page.goto('http://localhost:8080/flaky.html');
-  await page.click('#loadBtn');
-  const text = await page.textContent('#result');
-  expect(text).toBe('Data Loaded');
+test('submits and waits fixed time', async ({ page }) => {
+  await page.goto('http://localhost:8080/flaky3.html');
+  await page.click('#submitBtn');
+  await page.waitForTimeout(100); // fixed 100ms wait — response can take up to 250ms
+  const text = await page.textContent('#status');
+  expect(text).toBe('Success');
 });
-

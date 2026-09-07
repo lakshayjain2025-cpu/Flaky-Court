@@ -1,7 +1,7 @@
 {
   "targetTest": "candidate-2.test.js",
-  "testCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data on button click', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  await page.waitForFunction(() => document.querySelector('#result')?.textContent === 'Data Loaded');\n  const text = await page.textContent('#result');\n  expect(text).toBe('Data Loaded');\n});",
-  "sourceCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data on button click', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  await page.waitForFunction(() => document.querySelector('#result')?.textContent === 'Data Loaded');\n  const text = await page.textContent('#result');\n  expect(text).toBe('Data Loaded');\n});",
+  "testCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data on button click', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  await page.waitForFunction(() => document.querySelector('#result')?.textContent?.trim() === 'Data Loaded');\n  const text = await page.textContent('#result');\n  expect(text).toBe('Data Loaded');\n});",
+  "sourceCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data on button click', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  await page.waitForFunction(() => document.querySelector('#result')?.textContent?.trim() === 'Data Loaded');\n  const text = await page.textContent('#result');\n  expect(text).toBe('Data Loaded');\n});",
   "sampleFailure": null,
   "totalRuns": 15,
   "passes": 15,
@@ -23,5 +23,6 @@
     1,
     1,
     1
-  ]
+  ],
+  "durationSec": "7.1"
 }

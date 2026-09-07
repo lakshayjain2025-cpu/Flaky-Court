@@ -1,18 +1,18 @@
 {
   "cause": "RACE_CONDITION",
-  "explanation": "The test immediately evaluates `page.textContent('#result')` right after clicking the button, without waiting for the asynchronous operation that populates `#result` to complete. Because `textContent` reads the DOM synchronously at that exact instant, it evaluates to an empty string.",
+  "explanation": "The test fetches the text content of '#result' immediately after clicking the button using 'page.textContent()', which does not wait for asynchronous DOM updates to finish. Because the data population occurs asynchronously after the click, the test reads an empty string before the text 'Data Loaded' is rendered.",
   "candidates": [
     {
       "fixedCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data on button click', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  await expect(page.locator('#result')).toHaveText('Data Loaded');\n});",
-      "rationale": "Replaces the static `textContent()` call and plain Jest-style assertion with Playwright's web-first `expect(locator).toHaveText()` assertion, which automatically retries until the expected text appears or the timeout is reached."
+      "rationale": "Replaces 'page.textContent()' and standard Jest-style 'expect().toBe()' with Playwright's web-first 'expect(locator).toHaveText()' assertion, which automatically retries and waits until the target element contains the expected text or times out."
     },
     {
-      "fixedCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data on button click', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  await page.waitForFunction(() => document.querySelector('#result')?.textContent === 'Data Loaded');\n  const text = await page.textContent('#result');\n  expect(text).toBe('Data Loaded');\n});",
-      "rationale": "Uses `page.waitForFunction` to explicitly poll the browser state until `#result` contains 'Data Loaded' before reading `textContent`, guaranteeing the dynamic fetch or timer has finished."
+      "fixedCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data on button click', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  await page.waitForFunction(() => document.querySelector('#result')?.textContent?.trim() === 'Data Loaded');\n  const text = await page.textContent('#result');\n  expect(text).toBe('Data Loaded');\n});",
+      "rationale": "Uses 'page.waitForFunction()' to explicitly pause test execution until the DOM node's text content updates to 'Data Loaded' before reading the value into memory."
     }
   ],
   "confidence": {
     "level": "high",
-    "reason": "The failure output clearly shows `expect(received).toBe(expected)` received an empty string right after clicking the button, which is a classic symptom of reading dynamic DOM state before an async operation finishes."
+    "reason": "The failure log directly shows an empty string received immediately after click due to missing auto-retry mechanisms on page.textContent."
   }
 }
