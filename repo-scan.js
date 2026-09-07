@@ -133,8 +133,8 @@ async function main() {
   const summary = {
     scannedFolder: fullPath,
     totalTestFiles: testFiles.length,
-    succeeded: repoResults.filter((result) => result.status === 'fixed' || result.status === 'stable').length,
-    failed: repoErrors.length + repoResults.filter((result) => result.status === 'unverified').length,
+    succeeded: repoResults.length,
+    failed: repoErrors.length,
     results: repoResults,
     errors: repoErrors,
   };
