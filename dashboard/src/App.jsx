@@ -22,7 +22,7 @@ function App() {
   const [expandedRepoRow, setExpandedRepoRow] = useState(null);
 
   useEffect(() => {
-    const eventSource = new EventSource('/stream');
+    const eventSource = new EventSource('http://localhost:4000/stream');
     eventSource.onmessage = (event) => {
       const payload = JSON.parse(event.data);
 
@@ -72,7 +72,7 @@ function App() {
   async function finishSingleRun() {
     stopStatusPolling();
     try {
-      const response = await fetch('/latest-results');
+      const response = await fetch('http://localhost:4000/latest-results');
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       setData(await response.json());
       setStatus('');
@@ -88,7 +88,7 @@ function App() {
     stopStatusPolling();
     const checkStatus = async () => {
       try {
-        const response = await fetch(`/verify-loop-status/${runId}`);
+        const response = await fetch(`http://localhost:4000/verify-loop-status/${runId}`);
         if (!response.ok) return;
         const run = await response.json();
         if (run.status === 'complete') return finishSingleRun();
@@ -120,7 +120,7 @@ function App() {
   async function finishRepoScan(summary) {
     stopStatusPolling();
     try {
-      const completedSummary = summary || await fetch('/latest-repo-results').then(response => {
+      const completedSummary = summary || await fetch('http://localhost:4000/latest-repo-results').then(response => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.json();
       });
@@ -139,7 +139,7 @@ function App() {
     stopStatusPolling();
     const checkStatus = async () => {
       try {
-        const response = await fetch(`/repo-scan-status/${scanId}`);
+        const response = await fetch(`http://localhost:4000/repo-scan-status/${scanId}`);
         if (!response.ok) return;
         const scan = await response.json();
         if (scan.status === 'complete') return finishRepoScan();
@@ -176,7 +176,7 @@ function App() {
       setIsRepoMode(true);
       setUploadedTestFile(null);
       formData.append('repoZip', file);
-      const res = await fetch('/upload-zip', { method: 'POST', body: formData });
+      const res = await fetch('http://localhost:4000/upload-zip', { method: 'POST', body: formData });
       const json = await res.json();
       if (json.success) {
         setRepoExtractedPath(json.extractedPath);
@@ -187,7 +187,7 @@ function App() {
     } else {
       setIsRepoMode(false);
       formData.append('testFile', file);
-      const res = await fetch('/upload-test', { method: 'POST', body: formData });
+      const res = await fetch('http://localhost:4000/upload-test', { method: 'POST', body: formData });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Upload failed');
       setUploadedTestFile(json.filename);
@@ -211,7 +211,7 @@ function App() {
     if (isRepoMode) {
       setStatus('Starting repo scan...');
       try {
-        const response = await fetch('/run-repo-scan', {
+        const response = await fetch('http://localhost:4000/run-repo-scan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ targetDir: repoExtractedPath }),
@@ -227,7 +227,7 @@ function App() {
     } else {
       setStatus('Court is in session — this may take a few minutes...');
       try {
-        const response = await fetch('/run-verify-loop', {
+        const response = await fetch('http://localhost:4000/run-verify-loop', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ testFile: uploadedTestFile }),
@@ -244,7 +244,7 @@ function App() {
   }
 
   function downloadFixed() {
-    window.location.href = '/download-fixed';
+    window.location.href = 'http://localhost:4000/download-fixed';
   }
 
   function renderDetailView(testData) {

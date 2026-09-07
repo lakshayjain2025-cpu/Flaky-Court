@@ -6,7 +6,6 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const AdmZip = require('adm-zip');
-const frontendDir = path.join(__dirname, 'dashboard', 'dist');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, __dirname),
@@ -275,17 +274,6 @@ app.get('/latest-repo-results', (req, res) => {
   } catch (e) {
     res.status(404).json({ error: 'repo-results.json not found' });
   }
-});
-
-// Railway starts this Express process, not Vite. Serve the production React
-// bundle from the same origin so GET / and all browser API calls work there.
-app.use(express.static(frontendDir));
-app.get('/', (req, res) => {
-  res.sendFile(path.join(frontendDir, 'index.html'), (error) => {
-    if (error) {
-      res.status(503).send('Frontend build is unavailable. Run the dashboard build first.');
-    }
-  });
 });
 
 const PORT = process.env.PORT || 4000;
