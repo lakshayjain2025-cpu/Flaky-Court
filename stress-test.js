@@ -3,8 +3,22 @@ const fs = require('fs');
 const path = require('path');
 
 const targetTest = process.argv[2] || 'flaky.test.js';
-const phase = process.argv[4] || 'before';
-const TOTAL_RUNS = 50;
+const outputFile = process.argv[3] || 'results.json';
+let phase = 'before';
+let TOTAL_RUNS = 50;
+
+if (process.argv[5] !== undefined && !isNaN(parseInt(process.argv[5], 10))) {
+  phase = process.argv[4] || 'before';
+  TOTAL_RUNS = parseInt(process.argv[5], 10);
+} else if (process.argv[4] !== undefined) {
+  if (!isNaN(parseInt(process.argv[4], 10))) {
+    TOTAL_RUNS = parseInt(process.argv[4], 10);
+    phase = 'before';
+  } else {
+    phase = process.argv[4];
+  }
+}
+
 let passes = 0;
 let failures = 0;
 let sampleFailure = null;

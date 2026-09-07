@@ -1,0 +1,12 @@
+{
+  "iterations": 1,
+  "candidatesConsidered": 2,
+  "confidence": {
+    "level": "high",
+    "reason": "The failure output clearly shows `expect(received).toBe(expected)` received an empty string right after clicking the button, which is a classic symptom of reading dynamic DOM state before an async operation finishes."
+  },
+  "finalCause": "RACE_CONDITION",
+  "finalExplanation": "The test immediately evaluates `page.textContent('#result')` right after clicking the button, without waiting for the asynchronous operation that populates `#result` to complete. Because `textContent` reads the DOM synchronously at that exact instant, it evaluates to an empty string.",
+  "flakeRateBefore": 0.96,
+  "flakeRateAfter": 0
+}

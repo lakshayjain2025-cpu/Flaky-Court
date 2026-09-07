@@ -8,7 +8,15 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, __dirname),
   filename: (req, file, cb) => cb(null, 'uploaded.test.js'),
 });
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  fileFilter: (req, file, cb) => {
+    if (!file.originalname.toLowerCase().endsWith('.js')) {
+      return cb(new Error('Only .js files are accepted.'));
+    }
+    cb(null, true);
+  },
+});
 
 const app = express();
 app.use(cors());
@@ -50,17 +58,33 @@ app.post('/apply-fix', (req, res) => {
   const fs = require('fs');
   try {
     const diagnosisPath = path.join(__dirname, 'diagnosis-output.json');
+    if (!fs.existsSync(diagnosisPath)) {
+      return res.status(404).json({ error: 'diagnosis-output.json not found' });
+    }
     const diagnosis = JSON.parse(fs.readFileSync(diagnosisPath, 'utf8'));
 
-    if (!diagnosis.fixedCode) {
-      return res.status(400).json({ error: 'No fixedCode found in diagnosis output' });
+    // Support diagnosis.candidates[0].fixedCode as a shim, fallback to diagnosis.fixedCode
+    const fixedCode = diagnosis.candidates?.[0]?.fixedCode || diagnosis.fixedCode;
+
+    if (!fixedCode) {
+      return res.status(400).json({ error: 'deprecated — use /run-verify-loop' });
     }
 
-    fs.writeFileSync(path.join(__dirname, 'fixed.test.js'), diagnosis.fixedCode, 'utf8');
+    fs.writeFileSync(path.join(__dirname, 'fixed.test.js'), fixedCode, 'utf8');
     res.json({ success: true, filename: 'fixed.test.js' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+app.post('/run-verify-loop', (req, res) => {
+  const { testFile } = req.body;
+  exec(`node verify-loop.js ${testFile || 'uploaded.test.js'}`, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
+    if (err) {
+      return res.status(500).json({ error: stderr || err.message });
+    }
+    res.json({ success: true, output: stdout });
+  });
 });
 
 app.post('/run-diagnose', (req, res) => {
@@ -81,8 +105,16 @@ app.post('/run-finalize', (req, res) => {
     res.json({ success: true, output: stdout });
   });
 });
-app.post('/upload-test', upload.single('testFile'), (req, res) => {
-  res.json({ success: true, filename: 'uploaded.test.js' });
+app.post('/upload-test', (req, res) => {
+  upload.single('testFile')(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ error: err.message });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file was uploaded.' });
+    }
+    res.json({ success: true, filename: 'uploaded.test.js' });
+  });
 });
 
 app.get('/download-fixed', (req, res) => {

@@ -1,5 +1,18 @@
 {
-  "cause": "TEST_PATTERN_MISMATCH",
-  "explanation": "The test runner failed to execute because the file path or test filter argument passed to the CLI did not match any test files, often caused by unescaped special characters (like $ or *) or an incorrect file naming pattern.",
-  "fixedCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data reliably', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  await expect(page.locator('#result')).toHaveText('Data Loaded');\n});"
+  "cause": "RACE_CONDITION",
+  "explanation": "The test immediately evaluates `page.textContent('#result')` right after clicking the button, without waiting for the asynchronous operation that populates `#result` to complete. Because `textContent` reads the DOM synchronously at that exact instant, it evaluates to an empty string.",
+  "candidates": [
+    {
+      "fixedCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data on button click', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  await expect(page.locator('#result')).toHaveText('Data Loaded');\n});",
+      "rationale": "Replaces the static `textContent()` call and plain Jest-style assertion with Playwright's web-first `expect(locator).toHaveText()` assertion, which automatically retries until the expected text appears or the timeout is reached."
+    },
+    {
+      "fixedCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data on button click', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  await page.waitForFunction(() => document.querySelector('#result')?.textContent === 'Data Loaded');\n  const text = await page.textContent('#result');\n  expect(text).toBe('Data Loaded');\n});",
+      "rationale": "Uses `page.waitForFunction` to explicitly poll the browser state until `#result` contains 'Data Loaded' before reading `textContent`, guaranteeing the dynamic fetch or timer has finished."
+    }
+  ],
+  "confidence": {
+    "level": "high",
+    "reason": "The failure output clearly shows `expect(received).toBe(expected)` received an empty string right after clicking the button, which is a classic symptom of reading dynamic DOM state before an async operation finishes."
+  }
 }

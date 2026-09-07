@@ -12,7 +12,7 @@ function App() {
   useEffect(() => {
     const eventSource = new EventSource('http://localhost:4000/stream');
     eventSource.onmessage = (event) => setLiveRun(JSON.parse(event.data));
-    eventSource.onerror = () => {};
+    eventSource.onerror = () => { };
     return () => eventSource.close();
   }, []);
 
@@ -31,48 +31,47 @@ function App() {
     setLiveRun(null);
   }
 
-    async function runFullPipeline() {
+  function phaseLabel(phase) {
+    switch (phase) {
+      case 'before': return 'establishing baseline';
+      case 'candidate-1': return 'testing candidate fix 1';
+      case 'candidate-2': return 'testing candidate fix 2';
+      case 'after': return 'verifying winning fix';
+      default: return 'running tests';
+    }
+  }
+
+  async function runFullPipeline() {
     setLoading(true);
     setLiveRun(null);
+    setStatus('Court is in session — this may take a few minutes and retry automatically…');
 
-    setStatus('Stress-testing your file — 50 runs…');
-    await fetch('http://localhost:4000/run-stress-test', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ testFile: 'uploaded.test.js', outputFile: 'before-results.json', phase: 'before' }),
-    });
+    try {
+      const response = await fetch('http://localhost:4000/run-verify-loop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ testFile: 'uploaded.test.js' }),
+      });
 
-    setStatus('Diagnosing the failure with AI…');
-    await fetch('http://localhost:4000/run-diagnose', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ inputFile: 'before-results.json', outputFile: 'diagnosis-output.json' }),
-    });
+      if (!response.ok) {
+        throw new Error('The verification run failed.');
+      }
 
-    setStatus('Writing the AI-generated fix…');
-    await fetch('http://localhost:4000/apply-fix', { method: 'POST' });
-
-    setStatus('Verifying the fix — 50 more runs…');
-    await fetch('http://localhost:4000/run-stress-test', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ testFile: 'fixed.test.js', outputFile: 'after-results.json', phase: 'after' }),
-    });
-
-    setStatus('Finalizing the verdict…');
-    await fetch('http://localhost:4000/run-finalize', { method: 'POST' });
-
-    const result = await fetch('http://localhost:4000/latest-results').then((r) => r.json());
-    setData(result);
-    setStatus('');
-    setLoading(false);
+      const result = await fetch('http://localhost:4000/latest-results').then((r) => r.json());
+      setData(result);
+      setStatus('');
+    } catch (err) {
+      setStatus('Something went wrong — check the backend terminal for details.');
+    } finally {
+      setLoading(false);
+    }
   }
 
   function downloadFixed() {
     window.location.href = 'http://localhost:4000/download-fixed';
   }
 
-    return (
+  return (
     <div className="page">
       <header className="hero">
         <p className="eyebrow">// flaky-court</p>
@@ -85,14 +84,14 @@ function App() {
 
       <section className="panel">
         <div className="panel-bar">
-          <span className="panel-dot red"></span>
-          <span className="panel-dot yellow"></span>
-          <span className="panel-dot green"></span>
+          <span className="panel-dot red" aria-hidden="true"></span>
+          <span className="panel-dot yellow" aria-hidden="true"></span>
+          <span className="panel-dot green" aria-hidden="true"></span>
           <span className="panel-label">courtroom.js</span>
         </div>
         <div className="panel-body">
           <label className="dropzone" htmlFor="file-input">
-            <input id="file-input" type="file" accept=".js" onChange={handleFilePicked} hidden />
+            <input id="file-input" type="file" accept=".js" onChange={handleFilePicked} className="visually-hidden" />
             {uploadedName ? (
               <span className="dropzone-filled">{uploadedName}</span>
             ) : (
@@ -113,14 +112,14 @@ function App() {
             </button>
           </div>
 
-          {status && <p className="status-line">{status}</p>}
+          {status && <p className="status-line" role="status" aria-live="polite">{status}</p>}
         </div>
       </section>
 
       {liveRun && loading && (
         <section className="grid-block live">
           <div className="grid-header">
-                  <h4>live — {liveRun.phase === 'after' ? 'verifying fix' : 'testing original'} — run {liveRun.currentRun} of {liveRun.totalRuns}</h4>
+            <h3>live — {phaseLabel(liveRun.phase)} — run {liveRun.currentRun} of {liveRun.totalRuns}</h3>
             <span className="grid-count">
               {liveRun.runResults.filter(r => r).length} pass / {liveRun.runResults.filter(r => !r).length} fail
             </span>
@@ -130,7 +129,9 @@ function App() {
               <span
                 key={i}
                 className={`dot ${result ? 'pass' : 'fail'}${i === liveRun.runResults.length - 1 ? ' enter' : ''}`}
-              />
+              >
+                <span className="visually-hidden">{result ? 'pass' : 'fail'}</span>
+              </span>
             ))}
           </div>
         </section>
@@ -140,12 +141,12 @@ function App() {
         <>
           <section className="stats-row">
             <div className="stat-card before">
-              <h3>before</h3>
+              <h2>before</h2>
               <p className="flake-rate">{(data.flakeRateBefore * 100).toFixed(0)}%</p>
               <p className="stat-detail">{data.failuresBefore} of {data.totalRunsBefore} runs failed</p>
             </div>
             <div className="stat-card after">
-              <h3>after</h3>
+              <h2>after</h2>
               <p className="flake-rate">{(data.flakeRateAfter * 100).toFixed(0)}%</p>
               <p className="stat-detail">{data.failuresAfter} of {data.totalRunsAfter} runs failed</p>
             </div>
@@ -162,14 +163,16 @@ function App() {
 
           <section className="grid-block">
             <div className="grid-header">
-              <h4>the 50 runs that proved it</h4>
+              <h3>the 50 runs that proved it</h3>
               <span className="grid-count">
                 {data.runResults.filter(r => r).length} pass / {data.runResults.filter(r => !r).length} fail
               </span>
             </div>
             <div className="dots">
               {data.runResults.map((result, i) => (
-                <span key={i} className={`dot ${result ? 'pass' : 'fail'}`} />
+                <span key={i} className={`dot ${result ? 'pass' : 'fail'}`}>
+                  <span className="visually-hidden">{result ? 'pass' : 'fail'}</span>
+                </span>
               ))}
             </div>
           </section>

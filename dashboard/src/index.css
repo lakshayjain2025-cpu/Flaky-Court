@@ -4,6 +4,18 @@
   box-sizing: border-box;
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 body {
   margin: 0;
   background: #1c1f2b;
@@ -181,7 +193,7 @@ body {
 .stat-card.before { background: #241d21; border: 1px solid #3d2a2c; }
 .stat-card.after { background: #1a2422; border: 1px solid #223a30; }
 
-.stat-card h3 {
+.stat-card h2 {
   margin: 0 0 4px;
   font-size: 13px;
   font-weight: 500;
@@ -244,7 +256,7 @@ body {
   margin-bottom: 12px;
 }
 
-.grid-block h4 {
+.grid-block h3 {
   font-size: 13px;
   font-weight: 500;
   color: #838ba0;
