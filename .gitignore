@@ -3,3 +3,20 @@ node_modules
 test-results-*/
 upload-*.test.js
 repo-*/
+
+# Generated Flaky Court trial artifacts
+*-results.json
+results.json
+*-diagnosis-output.json
+diagnosis-output.json
+*-verify-summary.json
+verify-summary.json
+*-verify-loop-output.json
+verify-loop-output.json
+candidate-*.test.js
+*-candidate-*.test.js
+*-fixed.test.js
+fixed.test.js
+test-results/
+uploaded-*.zip
+dashboard/public/results.json
