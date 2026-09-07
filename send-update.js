@@ -1,6 +1,6 @@
 async function sendUpdate(payload) {
   try {
-    await fetch('http://localhost:4000/update', {
+    await fetch(`http://localhost:${process.env.PORT || 4000}/update`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

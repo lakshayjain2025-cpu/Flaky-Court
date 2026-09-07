@@ -6,6 +6,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const AdmZip = require('adm-zip');
+const dashboardDist = path.join(__dirname, 'dashboard', 'dist');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, __dirname),
@@ -285,4 +286,15 @@ app.get('/verify-loop-status/:runId', (req, res) => {
   const run = verifyRuns.get(req.params.runId);
   if (!run) return res.status(404).json({ error: 'Run not found' });
   res.json(run);
+});
+
+// In production this process serves both the API and the Vite build. API routes
+// above retain priority; this fallback only handles browser navigation and assets.
+app.use(express.static(dashboardDist));
+app.get('/{*path}', (req, res) => {
+  res.sendFile(path.join(dashboardDist, 'index.html'), (error) => {
+    if (error && !res.headersSent) {
+      res.status(503).send('Frontend build is unavailable. Run npm run build before starting the server.');
+    }
+  });
 });
