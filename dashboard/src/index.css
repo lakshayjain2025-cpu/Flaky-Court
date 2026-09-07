@@ -354,3 +354,59 @@ body {
 @media (max-width: 600px) {
   .stats-row, .code-diff { flex-direction: column; }
 }
+
+.repo-results {
+  background: #21242f;
+  border: 1px solid #2e3342;
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 28px;
+}
+
+.repo-results .grid-header {
+  padding: 16px;
+  margin: 0;
+  background: #262b3a;
+  border-bottom: 1px solid #2e3342;
+}
+
+.repo-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.repo-table th, .repo-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid #2e3342;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+}
+
+.repo-table th {
+  color: #838ba0;
+  font-weight: 500;
+  background: #21242f;
+}
+
+.repo-table tr.clickable {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.repo-table tr.clickable:hover {
+  background: #2a3040;
+}
+
+.repo-table td {
+  color: #d8dce5;
+}
+
+.expanded-row td {
+  padding: 0;
+  background: #1c1f2b;
+}
+
+.detail-view {
+  padding: 24px;
+}

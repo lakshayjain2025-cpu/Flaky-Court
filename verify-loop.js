@@ -7,6 +7,9 @@ async function main() {
   const targetTest = process.argv[2] || 'uploaded.test.js';
   const namespace = process.argv[3] || path.basename(targetTest, '.test.js');
   const f = (name) => `${namespace}-${name}`;
+  const baselineRuns = parseInt(process.env.BASELINE_RUNS, 10) || 50;
+  const candidateRuns = parseInt(process.env.CANDIDATE_RUNS, 10) || 15;
+  const confirmationRuns = parseInt(process.env.CONFIRMATION_RUNS, 10) || baselineRuns;
 
   console.log(`=== Starting Self-Correction Verify Loop (2-Candidate Tournament) [${namespace}] ===\n`);
 
@@ -31,8 +34,8 @@ async function main() {
     }
   }
 
-  console.log(`Running: node stress-test.js ${targetTest} ${f('before-results.json')} before-${namespace} 50`);
-  execSync(`node stress-test.js ${targetTest} ${f('before-results.json')} before-${namespace} 50`, {
+  console.log(`Running: node stress-test.js ${targetTest} ${f('before-results.json')} before-${namespace} ${baselineRuns}`);
+  execSync(`node stress-test.js ${targetTest} ${f('before-results.json')} before-${namespace} ${baselineRuns}`, {
     stdio: 'inherit',
     cwd: __dirname,
   });
@@ -40,6 +43,41 @@ async function main() {
 
   console.log(`Baseline target: ${baseline.targetTest || targetTest}`);
   console.log(`Baseline Flake Rate: ${(baseline.flakeRate * 100).toFixed(1)}% (${baseline.failures}/${baseline.totalRuns} failures)\n`);
+
+  // A passing baseline is already a successful outcome. Do not call the
+  // diagnosis service or invent a replacement test for code that is stable.
+  if (baseline.flakeRate === 0) {
+    const originalCode = baseline.testCode || baseline.sourceCode;
+    const stableResult = {
+      testName: baseline.targetTest || targetTest,
+      flakeRateBefore: baseline.flakeRate,
+      totalRunsBefore: baseline.totalRuns,
+      failuresBefore: baseline.failures,
+      runResults: baseline.runResults,
+      diagnosis: {
+        cause: 'NOT_FLAKY',
+        explanation: `The test passed all ${baseline.totalRuns} baseline runs, so no fix was needed.`,
+      },
+      confidence: {
+        level: 'high',
+        reason: `All ${baseline.totalRuns} independent baseline runs passed.`,
+      },
+      iterations: 0,
+      candidatesConsidered: 0,
+      attemptHistory: [],
+      originalCode,
+      fixedCode: originalCode,
+      flakeRateAfter: 0,
+      totalRunsAfter: baseline.totalRuns,
+      failuresAfter: 0,
+    };
+    fs.writeFileSync(path.join(__dirname, f('results.json')), JSON.stringify(stableResult, null, 2), 'utf8');
+    if (namespace) {
+      fs.writeFileSync(path.join(__dirname, 'results.json'), JSON.stringify(stableResult, null, 2), 'utf8');
+    }
+    console.log(`[${namespace}] Test is stable; no diagnosis or fix was required.`);
+    return;
+  }
 
   const MAX_ATTEMPTS = 3;
   let iterations = 0;
@@ -72,16 +110,16 @@ async function main() {
     fs.writeFileSync(cand2Path, candidate2.fixedCode, 'utf8');
     console.log(`\nWrote ${f('candidate-1.test.js')} and ${f('candidate-2.test.js')}`);
 
-    console.log(`\n--- [${namespace}] Shootout: Testing Candidate 1 (15 runs) ---`);
-    execSync(`node stress-test.js ${f('candidate-1.test.js')} ${f('candidate-1-results.json')} candidate-1-${namespace} 15`, {
+    console.log(`\n--- [${namespace}] Shootout: Testing Candidate 1 (${candidateRuns} runs) ---`);
+    execSync(`node stress-test.js ${f('candidate-1.test.js')} ${f('candidate-1-results.json')} candidate-1-${namespace} ${candidateRuns}`, {
       stdio: 'inherit',
       cwd: __dirname,
     });
     const cand1Results = JSON.parse(fs.readFileSync(path.join(__dirname, f('candidate-1-results.json')), 'utf8'));
     console.log(`Candidate 1 Flake Rate (15 runs): ${(cand1Results.flakeRate * 100).toFixed(1)}% (${cand1Results.failures}/${cand1Results.totalRuns})`);
 
-    console.log(`\n--- [${namespace}] Shootout: Testing Candidate 2 (15 runs) ---`);
-    execSync(`node stress-test.js ${f('candidate-2.test.js')} ${f('candidate-2-results.json')} candidate-2-${namespace} 15`, {
+    console.log(`\n--- [${namespace}] Shootout: Testing Candidate 2 (${candidateRuns} runs) ---`);
+    execSync(`node stress-test.js ${f('candidate-2.test.js')} ${f('candidate-2-results.json')} candidate-2-${namespace} ${candidateRuns}`, {
       stdio: 'inherit',
       cwd: __dirname,
     });
@@ -103,8 +141,8 @@ async function main() {
     fs.writeFileSync(fixedTestPath, winningCandidate.fixedCode, 'utf8');
     console.log(`Copied Candidate ${winnerNumber} to ${f('fixed.test.js')}`);
 
-    console.log(`\n--- [${namespace}] Running 50-run confirmation on ${f('fixed.test.js')} ---`);
-    execSync(`node stress-test.js ${f('fixed.test.js')} ${f('after-results.json')} after-${namespace} 50`, {
+    console.log(`\n--- [${namespace}] Running ${confirmationRuns}-run confirmation on ${f('fixed.test.js')} ---`);
+    execSync(`node stress-test.js ${f('fixed.test.js')} ${f('after-results.json')} after-${namespace} ${confirmationRuns}`, {
       stdio: 'inherit',
       cwd: __dirname,
     });

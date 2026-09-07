@@ -17,8 +17,8 @@ async function diagnose(baselineInput, retryContext, outputFileArg) {
   }
 
   let testCode = results.testCode || results.sourceCode || results.originalCode;
-  if (!testCode && results.targetTest && fs.existsSync(path.join(__dirname, results.targetTest))) {
-    testCode = fs.readFileSync(path.join(__dirname, results.targetTest), 'utf8');
+  if (!testCode && results.targetTest && fs.existsSync(path.resolve(__dirname, results.targetTest))) {
+    testCode = fs.readFileSync(path.resolve(__dirname, results.targetTest), 'utf8');
   }
   const sampleFailure = results.sampleFailure;
 
@@ -70,18 +70,37 @@ Respond with ONLY raw JSON (no markdown fences, no formatting like \`\`\`json, n
   - "reason": one short sentence explaining that confidence level
 `;
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`;
+  const modelName = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
-  const maxRetries = 5;
+  // Do not leave the dashboard locked for ten minutes when the API is
+  // unavailable. These values can still be overridden for slower deployments.
+  const maxRetries = parseInt(process.env.GEMINI_MAX_RETRIES, 10) || 3;
+  const retryBaseMs = parseInt(process.env.GEMINI_RETRY_BASE_MS, 10) || 2000;
   const validLevels = ['low', 'medium', 'high'];
   let diagnosis = null;
+  const liveServerUrl = `http://localhost:${process.env.PORT || 4000}`;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    console.log(`[diagnose] Sending request to Gemini (attempt ${attempt}/${maxRetries})...`);
+    // Acquire the Gemini lock so concurrent verify-loop processes don't
+    // stampede the API.  The lock endpoint itself rate-limits by waiting
+    // MIN_GEMINI_GAP_MS between grants.
+    console.log(`[diagnose] Acquiring Gemini lock (attempt ${attempt}/${maxRetries})...`);
+    let hasLock = false;
+    try {
+      const lockRes = await fetch(`${liveServerUrl}/gemini-lock`, { method: 'POST' });
+      if (lockRes.ok) hasLock = true;
+    } catch (e) {
+      console.warn(`[diagnose] live-server not running, proceeding without lock`);
+    }
 
+    console.log(`[diagnose] Sending request to Gemini...`);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const timeout = parseInt(process.env.GEMINI_TIMEOUT_MS, 10) || 30000;
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
     let response;
+    let fetchError = null;
+
     try {
       response = await fetch(url, {
         method: 'POST',
@@ -93,20 +112,28 @@ Respond with ONLY raw JSON (no markdown fences, no formatting like \`\`\`json, n
         signal: controller.signal,
       });
     } catch (err) {
+      fetchError = err;
+    } finally {
       clearTimeout(timeoutId);
-      if (err.name === 'AbortError') {
-        console.warn(`[diagnose] Request timed out after 30s (attempt ${attempt}/${maxRetries}).`);
+      if (hasLock) {
+        try { await fetch(`${liveServerUrl}/gemini-unlock`, { method: 'POST' }); } catch (e) {}
+      }
+    }
+
+    if (fetchError) {
+      if (fetchError.name === 'AbortError') {
+        console.warn(`[diagnose] Request timed out after ${timeout}ms.`);
         continue;
       }
-      throw err;
+      throw fetchError;
     }
-    clearTimeout(timeoutId);
+
     console.log(`[diagnose] Response received — status ${response.status}`);
 
     if (!response.ok) {
       if (response.status === 503 || response.status === 429) {
-        const waitMs = attempt * 2000;
-        console.warn(`Gemini API busy (${response.status}). Retrying in ${waitMs / 1000}s...`);
+        const waitMs = attempt * retryBaseMs;
+        console.warn(`Gemini API busy (${response.status}). Retrying in ${waitMs / 1000}s... (attempt ${attempt}/${maxRetries})`);
         await new Promise((r) => setTimeout(r, waitMs));
         continue;
       }

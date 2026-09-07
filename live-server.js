@@ -1,13 +1,15 @@
+require('dotenv').config();
 const { exec } = require('child_process');
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const AdmZip = require('adm-zip');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, __dirname),
-  filename: (req, file, cb) => cb(null, 'uploaded.test.js'),
+  filename: (req, file, cb) => cb(null, `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.test.js`),
 });
 const upload = multer({
   storage,
@@ -24,6 +26,8 @@ app.use(cors());
 app.use(express.json());
 
 let clients = [];
+const verifyRuns = new Map();
+const repoScans = new Map();
 
 // Frontend connects here to receive live updates
 app.get('/stream', (req, res) => {
@@ -54,7 +58,7 @@ app.post('/update', (req, res) => {
 let geminiLockHeld = false;
 let geminiLockQueue = [];
 let lastGeminiCallTime = 0;
-const MIN_GEMINI_GAP_MS = 6000; // spacing between calls — tune based on your quota
+const MIN_GEMINI_GAP_MS = parseInt(process.env.GEMINI_GAP_MS, 10) || 6000; // spacing between calls — tune based on your quota
 
 app.post('/gemini-lock', (req, res) => {
   const tryAcquire = () => {
@@ -115,12 +119,24 @@ app.post('/apply-fix', (req, res) => {
 
 app.post('/run-verify-loop', (req, res) => {
   const { testFile, namespace } = req.body;
+  const target = testFile || 'uploaded.test.js';
   const ns = namespace ? ` ${namespace}` : '';
-  exec(`node verify-loop.js ${testFile || 'uploaded.test.js'}${ns}`, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
+
+  // Respond immediately — frontend listens on SSE for verify-loop-complete/error
+  const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  verifyRuns.set(runId, { status: 'running', startedAt: Date.now() });
+  res.json({ success: true, runId, message: 'Verify loop started' });
+
+  exec(`node verify-loop.js ${target}${ns}`, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
     if (err) {
-      return res.status(500).json({ error: stderr || err.message });
+      const errMsg = (stderr || err.message || 'unknown error').slice(0, 500);
+      verifyRuns.set(runId, { status: 'error', error: errMsg, finishedAt: Date.now() });
+      clients.forEach((c) => c.write(`data: ${JSON.stringify({ type: 'verify-loop-error', runId, error: errMsg })}\n\n`));
+      console.error('verify-loop error:', errMsg);
+    } else {
+      verifyRuns.set(runId, { status: 'complete', finishedAt: Date.now() });
+      clients.forEach((c) => c.write(`data: ${JSON.stringify({ type: 'verify-loop-complete', runId })}\n\n`));
     }
-    res.json({ success: true, output: stdout });
   });
 });
 
@@ -131,6 +147,33 @@ app.post('/run-diagnose', (req, res) => {
       return res.status(500).json({ error: stderr || err.message });
     }
     res.json({ success: true, output: stdout });
+  });
+});
+
+app.post('/run-repo-scan', (req, res) => {
+  const { targetDir, concurrency } = req.body;
+  const envConcurrency = process.env.REPO_CONCURRENCY || concurrency || 2;
+
+  if (!targetDir) {
+    return res.status(400).json({ error: 'targetDir is required' });
+  }
+
+  // Respond immediately — the scan runs in the background and pushes progress
+  // via SSE (/update). The frontend listens for repo-scan-complete to know when done.
+  const scanId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  repoScans.set(scanId, { status: 'running', startedAt: Date.now() });
+  res.json({ success: true, scanId, message: 'Repo scan started' });
+
+  exec(`node repo-scan.js "${targetDir}" ${envConcurrency}`, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
+    if (err) {
+      // Push the error to all SSE clients so the frontend can surface it
+      const errMsg = (stderr || err.message || 'unknown error').slice(0, 500);
+      clients.forEach((c) => c.write(`data: ${JSON.stringify({ type: 'repo-scan-error', error: errMsg })}\n\n`));
+      console.error('repo-scan error:', errMsg);
+      repoScans.set(scanId, { status: 'error', error: errMsg, finishedAt: Date.now() });
+    } else {
+      repoScans.set(scanId, { status: 'complete', finishedAt: Date.now() });
+    }
   });
 });
 
@@ -151,7 +194,40 @@ app.post('/upload-test', (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No file was uploaded.' });
     }
-    res.json({ success: true, filename: 'uploaded.test.js' });
+    res.json({ success: true, filename: req.file.filename });
+  });
+});
+
+const zipStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, __dirname),
+  filename: (req, file, cb) => cb(null, `uploaded-${Date.now()}.zip`),
+});
+const uploadZip = multer({
+  storage: zipStorage,
+  fileFilter: (req, file, cb) => {
+    if (!file.originalname.toLowerCase().endsWith('.zip')) {
+      return cb(new Error('Only .zip files are accepted.'));
+    }
+    cb(null, true);
+  },
+});
+
+app.post('/upload-zip', (req, res) => {
+  uploadZip.single('repoZip')(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ error: err.message });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file was uploaded.' });
+    }
+    try {
+      const zip = new AdmZip(req.file.path);
+      const extractDir = path.join(__dirname, `repo-${Date.now()}`);
+      zip.extractAllTo(extractDir, true);
+      res.json({ success: true, extractedPath: extractDir });
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to extract zip: ' + e.message });
+    }
   });
 });
 
@@ -172,7 +248,28 @@ app.get('/latest-results', (req, res) => {
   }
 });
 
-const PORT = 4000;
+app.get('/repo-scan-status/:scanId', (req, res) => {
+  const scan = repoScans.get(req.params.scanId);
+  if (!scan) return res.status(404).json({ error: 'Scan not found' });
+  res.json(scan);
+});
+
+app.get('/latest-repo-results', (req, res) => {
+  try {
+    const data = fs.readFileSync(path.join(__dirname, 'repo-results.json'), 'utf8');
+    res.json(JSON.parse(data));
+  } catch (e) {
+    res.status(404).json({ error: 'repo-results.json not found' });
+  }
+});
+
+const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`Live server running on http://localhost:${PORT}`);
+});
+
+app.get('/verify-loop-status/:runId', (req, res) => {
+  const run = verifyRuns.get(req.params.runId);
+  if (!run) return res.status(404).json({ error: 'Run not found' });
+  res.json(run);
 });

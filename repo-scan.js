@@ -6,6 +6,18 @@ async function main() {
   const targetDir = process.argv[2];
   const concurrency = parseInt(process.argv[3], 10) || 2;
 
+  async function sendUpdate(payload) {
+    try {
+      await fetch('http://localhost:4000/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (e) {
+      // live server might not be running — ignore silently
+    }
+  }
+
   if (!targetDir) {
     console.error('Usage: node repo-scan.js <folder-path> [concurrency]');
     process.exit(1);
@@ -44,8 +56,38 @@ async function main() {
   console.log(`Found ${testFiles.length} test file(s):`);
   testFiles.forEach((f) => console.log(`  - ${f}`));
 
-  const pLimit = (await import('p-limit')).default;
-  const limit = pLimit(concurrency);
+  await sendUpdate({
+    type: 'repo-scan-start',
+    targetDir: fullPath,
+    testFiles: testFiles.map(f => path.basename(f)),
+    totalFiles: testFiles.length,
+  });
+
+  // Inline concurrency limiter — avoids the ESM-only p-limit package in a CJS project.
+  function makePool(limit) {
+    let active = 0;
+    const queue = [];
+    function run(fn, resolve, reject) {
+      active++;
+      Promise.resolve().then(() => fn()).then(
+        (v) => { active--; resolve(v); drain(); },
+        (e) => { active--; reject(e); drain(); }
+      );
+    }
+    function drain() {
+      while (active < limit && queue.length) {
+        const { fn, resolve, reject } = queue.shift();
+        run(fn, resolve, reject);
+      }
+    }
+    return function schedule(fn) {
+      return new Promise((resolve, reject) => {
+        if (active < limit) { run(fn, resolve, reject); }
+        else { queue.push({ fn, resolve, reject }); }
+      });
+    };
+  }
+  const limit = makePool(concurrency);
 
   const repoResults = [];
   const repoErrors = [];
@@ -63,9 +105,25 @@ async function main() {
         const result = JSON.parse(fs.readFileSync(resultPath, 'utf8'));
         repoResults.push({ namespace, filePath, ...result });
         console.log(`[${namespace}] Done.`);
+
+        await sendUpdate({
+          type: 'repo-scan-progress',
+          namespace,
+          file: path.basename(filePath),
+          status: 'success',
+          result
+        });
       } catch (err) {
         console.error(`[${namespace}] Failed: ${err.message}`);
         repoErrors.push({ namespace, filePath, error: err.message });
+
+        await sendUpdate({
+          type: 'repo-scan-progress',
+          namespace,
+          file: path.basename(filePath),
+          status: 'error',
+          error: err.message
+        });
       }
     })
   );
@@ -80,6 +138,11 @@ async function main() {
     results: repoResults,
     errors: repoErrors,
   };
+
+  await sendUpdate({
+    type: 'repo-scan-complete',
+    summary
+  });
 
   fs.writeFileSync(
     path.join(__dirname, 'repo-results.json'),

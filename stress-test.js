@@ -3,12 +3,36 @@ const util = require('util');
 const execAsync = util.promisify(exec);
 const fs = require('fs');
 const path = require('path');
-const pLimit = require('p-limit').default || require('p-limit');
+
+// Inline concurrency pool — p-limit v5+ is ESM-only and can't be require()'d
+// in a "type":"commonjs" project. This is a drop-in replacement.
+function makePLimit(concurrency) {
+  let active = 0;
+  const queue = [];
+  function dispatch() {
+    while (active < concurrency && queue.length) {
+      const { fn, resolve, reject } = queue.shift();
+      active++;
+      Promise.resolve()
+        .then(() => fn())
+        .then(
+          (v) => { active--; resolve(v); dispatch(); },
+          (e) => { active--; reject(e); dispatch(); }
+        );
+    }
+  }
+  return function limit(fn) {
+    return new Promise((resolve, reject) => {
+      queue.push({ fn, resolve, reject });
+      dispatch();
+    });
+  };
+}
 
 const targetTest = process.argv[2] || 'flaky.test.js';
 const outputFile = process.argv[3] || 'results.json';
 let phase = 'before';
-let TOTAL_RUNS = 50;
+let TOTAL_RUNS = parseInt(process.env.STRESS_RUNS, 10) || 50;
 
 if (process.argv[5] !== undefined && !isNaN(parseInt(process.argv[5], 10))) {
   phase = process.argv[4] || 'before';
@@ -22,8 +46,8 @@ if (process.argv[5] !== undefined && !isNaN(parseInt(process.argv[5], 10))) {
   }
 }
 
-const CONCURRENCY = 6; // how many browser tests run at once — tune based on your machine
-const limit = pLimit(CONCURRENCY);
+const CONCURRENCY = parseInt(process.env.STRESS_CONCURRENCY, 10) || 6; // how many browser tests run at once — tune based on your machine
+const limit = makePLimit(CONCURRENCY);
 
 let passes = 0;
 let failures = 0;
@@ -88,7 +112,7 @@ async function runLoop() {
   const durationSec = ((Date.now() - startTime) / 1000).toFixed(1);
 
   const flakeRate = failures / TOTAL_RUNS;
-  const testCode = fs.readFileSync(path.join(__dirname, targetTest), 'utf8');
+  const testCode = fs.readFileSync(path.resolve(__dirname, targetTest), 'utf8');
   const results = {
     targetTest,
     testCode,
