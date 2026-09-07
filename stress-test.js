@@ -48,7 +48,7 @@ async function sendUpdate(payload) {
 function runOne(i) {
   return limit(async () => {
     try {
-      await execAsync(`npx playwright test --output=test-results-run-${i}`, {
+            await execAsync(`npx playwright test --output=test-results-${phase}-${i}-${process.pid}`, {
         encoding: 'utf8',
         env: {
           ...process.env,
@@ -116,9 +116,9 @@ async function runLoop() {
   console.log(`Flake Rate: ${(flakeRate * 100).toFixed(1)}%`);
   console.log(`Duration:   ${durationSec}s`);
   console.log(`Results written to ${outputFile}`);
-  // Clean up per-run temp output folders
+    // Clean up per-run temp output folders
   for (let i = 1; i <= TOTAL_RUNS; i++) {
-    const dir = path.join(__dirname, `test-results-run-${i}`);
+    const dir = path.join(__dirname, `test-results-${phase}-${i}-${process.pid}`);
     if (fs.existsSync(dir)) {
       fs.rmSync(dir, { recursive: true, force: true });
     }

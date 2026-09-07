@@ -2,7 +2,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 
-async function diagnose(baselineInput, retryContext) {
+async function diagnose(baselineInput, retryContext, outputFileArg) {
   let results;
   if (baselineInput && typeof baselineInput === 'object') {
     results = baselineInput;
@@ -141,8 +141,6 @@ Respond with ONLY raw JSON (no markdown fences, no formatting like \`\`\`json, n
       continue;
     }
 
-    // Real validation — no silent fallback. A malformed response is treated
-    // exactly like a network failure: retry the actual API call, don't invent data.
     const hasValidCandidates = Array.isArray(parsed.candidates) && parsed.candidates.length >= 2
       && parsed.candidates.every(c => typeof c.fixedCode === 'string' && typeof c.rationale === 'string');
     const hasValidConfidence = parsed.confidence
@@ -166,7 +164,9 @@ Respond with ONLY raw JSON (no markdown fences, no formatting like \`\`\`json, n
 
   console.log(diagnosis);
 
-  const outputFile = process.argv[3] || 'diagnosis-output.json';
+  // Explicit outputFileArg (used when called as a function from verify-loop.js)
+  // takes priority over CLI argv, which is only relevant when run directly.
+  const outputFile = outputFileArg || process.argv[3] || 'diagnosis-output.json';
   fs.writeFileSync(
     path.join(__dirname, outputFile),
     JSON.stringify(diagnosis, null, 2),

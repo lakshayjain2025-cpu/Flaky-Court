@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, __dirname),
@@ -46,16 +47,51 @@ app.post('/update', (req, res) => {
   });
   res.sendStatus(200);
 });
+
+// --- Gemini call coordination lock ---
+// Ensures only one diagnose.js call talks to Gemini at a time, even when
+// multiple verify-loop.js processes are running concurrently (repo scan).
+let geminiLockHeld = false;
+let geminiLockQueue = [];
+let lastGeminiCallTime = 0;
+const MIN_GEMINI_GAP_MS = 6000; // spacing between calls — tune based on your quota
+
+app.post('/gemini-lock', (req, res) => {
+  const tryAcquire = () => {
+    if (!geminiLockHeld) {
+      const now = Date.now();
+      const elapsed = now - lastGeminiCallTime;
+      const wait = Math.max(0, MIN_GEMINI_GAP_MS - elapsed);
+      geminiLockHeld = true;
+      setTimeout(() => {
+        lastGeminiCallTime = Date.now();
+        res.json({ acquired: true, waitedMs: wait });
+      }, wait);
+    } else {
+      geminiLockQueue.push(tryAcquire);
+    }
+  };
+  tryAcquire();
+});
+
+app.post('/gemini-unlock', (req, res) => {
+  geminiLockHeld = false;
+  const next = geminiLockQueue.shift();
+  if (next) next();
+  res.json({ released: true });
+});
+
 app.post('/run-stress-test', (req, res) => {
   const { testFile, outputFile, phase } = req.body;
-  exec(`node stress-test.js ${testFile} ${outputFile || 'results.json'} ${phase || 'before'}`, (err, stdout, stderr) => {    if (err) {
+  exec(`node stress-test.js ${testFile} ${outputFile || 'results.json'} ${phase || 'before'}`, (err, stdout, stderr) => {
+    if (err) {
       return res.status(500).json({ error: stderr || err.message });
     }
     res.json({ success: true, output: stdout });
   });
 });
+
 app.post('/apply-fix', (req, res) => {
-  const fs = require('fs');
   try {
     const diagnosisPath = path.join(__dirname, 'diagnosis-output.json');
     if (!fs.existsSync(diagnosisPath)) {
@@ -78,8 +114,9 @@ app.post('/apply-fix', (req, res) => {
 });
 
 app.post('/run-verify-loop', (req, res) => {
-  const { testFile } = req.body;
-  exec(`node verify-loop.js ${testFile || 'uploaded.test.js'}`, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
+  const { testFile, namespace } = req.body;
+  const ns = namespace ? ` ${namespace}` : '';
+  exec(`node verify-loop.js ${testFile || 'uploaded.test.js'}${ns}`, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
     if (err) {
       return res.status(500).json({ error: stderr || err.message });
     }
@@ -105,6 +142,7 @@ app.post('/run-finalize', (req, res) => {
     res.json({ success: true, output: stdout });
   });
 });
+
 app.post('/upload-test', (req, res) => {
   upload.single('testFile')(req, res, (err) => {
     if (err) {
@@ -118,7 +156,6 @@ app.post('/upload-test', (req, res) => {
 });
 
 app.get('/download-fixed', (req, res) => {
-  const fs = require('fs');
   const filePath = path.join(__dirname, 'fixed.test.js');
   if (!fs.existsSync(filePath)) {
     return res.status(404).json({ error: 'No fixed file available yet' });
@@ -127,8 +164,6 @@ app.get('/download-fixed', (req, res) => {
 });
 
 app.get('/latest-results', (req, res) => {
-  const fs = require('fs');
-  const path = require('path');
   try {
     const data = fs.readFileSync(path.join(__dirname, 'results.json'), 'utf8');
     res.json(JSON.parse(data));
@@ -136,6 +171,7 @@ app.get('/latest-results', (req, res) => {
     res.status(404).json({ error: 'results.json not found' });
   }
 });
+
 const PORT = 4000;
 app.listen(PORT, () => {
   console.log(`Live server running on http://localhost:${PORT}`);

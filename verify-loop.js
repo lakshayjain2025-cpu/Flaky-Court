@@ -4,24 +4,24 @@ const path = require('path');
 const { diagnose } = require('./diagnose');
 
 async function main() {
-  console.log('=== Starting Self-Correction Verify Loop (2-Candidate Tournament) ===\n');
-
   const targetTest = process.argv[2] || 'uploaded.test.js';
+  const namespace = process.argv[3] || path.basename(targetTest, '.test.js');
+  const f = (name) => `${namespace}-${name}`;
 
-  // Clear any leftover artifacts from a previous run so a new upload is
-  // never silently contaminated by stale results.
+  console.log(`=== Starting Self-Correction Verify Loop (2-Candidate Tournament) [${namespace}] ===\n`);
+
   const staleFiles = [
-    'before-results.json',
-    'after-results.json',
-    'results.json',
-    'diagnosis-output.json',
-    'verify-loop-output.json',
-    'verify-summary.json',
-    'candidate-1.test.js',
-    'candidate-1-results.json',
-    'candidate-2.test.js',
-    'candidate-2-results.json',
-    'fixed.test.js',
+    f('before-results.json'),
+    f('after-results.json'),
+    f('results.json'),
+    f('diagnosis-output.json'),
+    f('verify-loop-output.json'),
+    f('verify-summary.json'),
+    f('candidate-1.test.js'),
+    f('candidate-1-results.json'),
+    f('candidate-2.test.js'),
+    f('candidate-2-results.json'),
+    f('fixed.test.js'),
   ];
   for (const file of staleFiles) {
     const filePath = path.join(__dirname, file);
@@ -31,13 +31,12 @@ async function main() {
     }
   }
 
-  // Baseline — always run fresh, never reuse a cached before-results.json
-  console.log(`Running: node stress-test.js ${targetTest} before-results.json before 50`);
-  execSync(`node stress-test.js ${targetTest} before-results.json before 50`, {
+  console.log(`Running: node stress-test.js ${targetTest} ${f('before-results.json')} before-${namespace} 50`);
+  execSync(`node stress-test.js ${targetTest} ${f('before-results.json')} before-${namespace} 50`, {
     stdio: 'inherit',
     cwd: __dirname,
   });
-  const baseline = JSON.parse(fs.readFileSync(path.join(__dirname, 'before-results.json'), 'utf8'));
+  const baseline = JSON.parse(fs.readFileSync(path.join(__dirname, f('before-results.json')), 'utf8'));
 
   console.log(`Baseline target: ${baseline.targetTest || targetTest}`);
   console.log(`Baseline Flake Rate: ${(baseline.flakeRate * 100).toFixed(1)}% (${baseline.failures}/${baseline.totalRuns} failures)\n`);
@@ -50,11 +49,11 @@ async function main() {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     iterations = attempt;
     console.log(`\n========================================`);
-    console.log(`Attempt ${attempt} of ${MAX_ATTEMPTS}`);
+    console.log(`[${namespace}] Attempt ${attempt} of ${MAX_ATTEMPTS}`);
     console.log(`========================================`);
 
     console.log(`Calling diagnose() to generate 2 candidates...`);
-    const diagnosis = await diagnose(baseline, retryContext);
+    const diagnosis = await diagnose(baseline, retryContext, f('diagnosis-output.json'));
 
     if (!diagnosis.candidates || !Array.isArray(diagnosis.candidates) || diagnosis.candidates.length < 2) {
       throw new Error(`Expected at least 2 candidates from diagnose(), got: ${JSON.stringify(diagnosis.candidates)}`);
@@ -67,26 +66,26 @@ async function main() {
     console.log(`Candidate 2 Rationale: ${candidate2.rationale}`);
     console.log(`Confidence: ${diagnosis.confidence.level.toUpperCase()} — ${diagnosis.confidence.reason}`);
 
-    const cand1Path = path.join(__dirname, 'candidate-1.test.js');
-    const cand2Path = path.join(__dirname, 'candidate-2.test.js');
+    const cand1Path = path.join(__dirname, f('candidate-1.test.js'));
+    const cand2Path = path.join(__dirname, f('candidate-2.test.js'));
     fs.writeFileSync(cand1Path, candidate1.fixedCode, 'utf8');
     fs.writeFileSync(cand2Path, candidate2.fixedCode, 'utf8');
-    console.log(`\nWrote candidate-1.test.js and candidate-2.test.js`);
+    console.log(`\nWrote ${f('candidate-1.test.js')} and ${f('candidate-2.test.js')}`);
 
-    console.log(`\n--- Shootout: Testing Candidate 1 (15 runs) ---`);
-    execSync('node stress-test.js candidate-1.test.js candidate-1-results.json candidate-1 15', {
+    console.log(`\n--- [${namespace}] Shootout: Testing Candidate 1 (15 runs) ---`);
+    execSync(`node stress-test.js ${f('candidate-1.test.js')} ${f('candidate-1-results.json')} candidate-1-${namespace} 15`, {
       stdio: 'inherit',
       cwd: __dirname,
     });
-    const cand1Results = JSON.parse(fs.readFileSync(path.join(__dirname, 'candidate-1-results.json'), 'utf8'));
+    const cand1Results = JSON.parse(fs.readFileSync(path.join(__dirname, f('candidate-1-results.json')), 'utf8'));
     console.log(`Candidate 1 Flake Rate (15 runs): ${(cand1Results.flakeRate * 100).toFixed(1)}% (${cand1Results.failures}/${cand1Results.totalRuns})`);
 
-    console.log(`\n--- Shootout: Testing Candidate 2 (15 runs) ---`);
-    execSync('node stress-test.js candidate-2.test.js candidate-2-results.json candidate-2 15', {
+    console.log(`\n--- [${namespace}] Shootout: Testing Candidate 2 (15 runs) ---`);
+    execSync(`node stress-test.js ${f('candidate-2.test.js')} ${f('candidate-2-results.json')} candidate-2-${namespace} 15`, {
       stdio: 'inherit',
       cwd: __dirname,
     });
-    const cand2Results = JSON.parse(fs.readFileSync(path.join(__dirname, 'candidate-2-results.json'), 'utf8'));
+    const cand2Results = JSON.parse(fs.readFileSync(path.join(__dirname, f('candidate-2-results.json')), 'utf8'));
     console.log(`Candidate 2 Flake Rate (15 runs): ${(cand2Results.flakeRate * 100).toFixed(1)}% (${cand2Results.failures}/${cand2Results.totalRuns})`);
 
     let winnerIndex = 0;
@@ -98,21 +97,21 @@ async function main() {
     const winnerResults = winnerIndex === 0 ? cand1Results : cand2Results;
     const winnerFlakeRate15 = winnerResults.flakeRate;
 
-    console.log(`\n>>> Winner of 15-run shootout: Candidate ${winnerNumber} with ${(winnerFlakeRate15 * 100).toFixed(1)}% flake rate`);
+    console.log(`\n>>> [${namespace}] Winner of 15-run shootout: Candidate ${winnerNumber} with ${(winnerFlakeRate15 * 100).toFixed(1)}% flake rate`);
 
-    const fixedTestPath = path.join(__dirname, 'fixed.test.js');
+    const fixedTestPath = path.join(__dirname, f('fixed.test.js'));
     fs.writeFileSync(fixedTestPath, winningCandidate.fixedCode, 'utf8');
-    console.log(`Copied Candidate ${winnerNumber} to fixed.test.js`);
+    console.log(`Copied Candidate ${winnerNumber} to ${f('fixed.test.js')}`);
 
-    console.log(`\n--- Running 50-run confirmation on fixed.test.js ---`);
-    execSync('node stress-test.js fixed.test.js after-results.json after 50', {
+    console.log(`\n--- [${namespace}] Running 50-run confirmation on ${f('fixed.test.js')} ---`);
+    execSync(`node stress-test.js ${f('fixed.test.js')} ${f('after-results.json')} after-${namespace} 50`, {
       stdio: 'inherit',
       cwd: __dirname,
     });
 
-    const afterResults = JSON.parse(fs.readFileSync(path.join(__dirname, 'after-results.json'), 'utf8'));
+    const afterResults = JSON.parse(fs.readFileSync(path.join(__dirname, f('after-results.json')), 'utf8'));
     const confirmationRate = afterResults.flakeRate;
-    console.log(`50-run Confirmation Flake Rate: ${(confirmationRate * 100).toFixed(1)}% (${afterResults.failures}/${afterResults.totalRuns})`);
+    console.log(`[${namespace}] 50-run Confirmation Flake Rate: ${(confirmationRate * 100).toFixed(1)}% (${afterResults.failures}/${afterResults.totalRuns})`);
 
     const attemptRecord = {
       attemptNumber: attempt,
@@ -120,16 +119,8 @@ async function main() {
       explanation: diagnosis.explanation,
       confidence: diagnosis.confidence,
       candidates: [
-        {
-          candidateNumber: 1,
-          rationale: candidate1.rationale,
-          flakeRate15: cand1Results.flakeRate,
-        },
-        {
-          candidateNumber: 2,
-          rationale: candidate2.rationale,
-          flakeRate15: cand2Results.flakeRate,
-        },
+        { candidateNumber: 1, rationale: candidate1.rationale, flakeRate15: cand1Results.flakeRate },
+        { candidateNumber: 2, rationale: candidate2.rationale, flakeRate15: cand2Results.flakeRate },
       ],
       winningCandidate: winnerNumber,
       winnerFlakeRate15,
@@ -140,11 +131,11 @@ async function main() {
     attemptHistory.push(attemptRecord);
 
     if (confirmationRate === 0) {
-      console.log(`\n[SUCCESS] Attempt ${attempt}: Candidate ${winnerNumber} passed 50-run confirmation with 0% flakiness!`);
+      console.log(`\n[SUCCESS] [${namespace}] Attempt ${attempt}: Candidate ${winnerNumber} passed 50-run confirmation with 0% flakiness!`);
       break;
     }
 
-    console.log(`\n[RETRY NEEDED] Attempt ${attempt} winner failed 50-run confirmation (${(confirmationRate * 100).toFixed(1)}% flake rate).`);
+    console.log(`\n[RETRY NEEDED] [${namespace}] Attempt ${attempt} winner failed 50-run confirmation (${(confirmationRate * 100).toFixed(1)}% flake rate).`);
 
     if (attempt < MAX_ATTEMPTS) {
       console.log(`Building retryContext for attempt ${attempt + 1}...`);
@@ -163,16 +154,13 @@ async function main() {
     }
   }
 
-  const loopOutput = {
-    iterations,
-    attemptHistory,
-  };
-
-  const outputPath = path.join(__dirname, 'verify-loop-output.json');
-  fs.writeFileSync(outputPath, JSON.stringify(loopOutput, null, 2), 'utf8');
+  const loopOutput = { namespace, targetTest, iterations, attemptHistory };
+  fs.writeFileSync(path.join(__dirname, f('verify-loop-output.json')), JSON.stringify(loopOutput, null, 2), 'utf8');
 
   const lastAttempt = attemptHistory[attemptHistory.length - 1];
   const summary = {
+    namespace,
+    targetTest,
     iterations,
     candidatesConsidered: iterations * 2,
     confidence: lastAttempt.confidence,
@@ -181,19 +169,17 @@ async function main() {
     flakeRateBefore: baseline.flakeRate,
     flakeRateAfter: lastAttempt.flakeRateAfter,
   };
-  fs.writeFileSync(path.join(__dirname, 'verify-summary.json'), JSON.stringify(summary, null, 2), 'utf8');
+  fs.writeFileSync(path.join(__dirname, f('verify-summary.json')), JSON.stringify(summary, null, 2), 'utf8');
 
-  console.log(`\n=== Verification Loop Finished ===`);
-  console.log(`Results written to verify-loop-output.json:`);
+  console.log(`\n=== [${namespace}] Verification Loop Finished ===`);
   console.log(JSON.stringify(loopOutput, null, 2));
-  console.log(`\nSummary written to verify-summary.json:`);
   console.log(JSON.stringify(summary, null, 2));
 
-  console.log(`\n--- Finalizing combined report ---`);
-  execSync('node finalize.js', { stdio: 'inherit', cwd: __dirname });
+  console.log(`\n--- [${namespace}] Finalizing combined report ---`);
+  execSync(`node finalize.js ${namespace}`, { stdio: 'inherit', cwd: __dirname });
 }
 
 main().catch((err) => {
-  console.error('verify-loop failed:', err);
+  console.error(`verify-loop [${process.argv[3] || 'unknown'}] failed:`, err);
   process.exit(1);
 });
