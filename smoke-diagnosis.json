@@ -1,0 +1,18 @@
+{
+  "cause": "ELEMENT_NOT_READY_OR_ASYNC_LOAD",
+  "explanation": "The test clicks the load button and immediately checks the result text, but the data loading is asynchronous. If the result element isn’t populated yet, the assertion can fail intermittently, causing flakiness.",
+  "candidates": [
+    {
+      "fixedCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data reliably', async ({ page }) => {\n  // Navigate to the page\n  await page.goto('http://localhost:8080/flaky.html');\n\n  // Ensure the load button is visible and enabled before clicking\n  const loadBtn = page.locator('#loadBtn');\n  await expect(loadBtn).toBeVisible();\n  await expect(loadBtn).toBeEnabled();\n\n  // Click the button and wait for the network request that loads the data\n  const [response] = await Promise.all([\n    page.waitForResponse(resp => resp.url().includes('/data') && resp.status() === 200),\n    loadBtn.click()\n  ]);\n\n  // Optionally verify the response body if needed\n  // const data = await response.json();\n\n  // Wait for the result element to contain the expected text\n  const result = page.locator('#result');\n  await expect(result).toHaveText('Data Loaded', { timeout: 10000 });\n});",
+      "rationale": "This version explicitly waits for the network response that populates the result, ensuring the asynchronous load has completed before asserting the text. It also checks that the button is visible and enabled, eliminating race conditions."
+    },
+    {
+      "fixedCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data reliably', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n\n  // Wait for the button to be ready and click it\n  await page.waitForSelector('#loadBtn', { state: 'visible' });\n  await page.click('#loadBtn');\n\n  // Wait for the result element to appear and contain the expected text\n  const resultLocator = page.locator('#result');\n  await resultLocator.waitFor({ state: 'visible', timeout: 10000 });\n  await expect(resultLocator).toHaveText('Data Loaded', { timeout: 10000 });\n});",
+      "rationale": "This approach adds explicit waits for the button’s visibility and the result element’s visibility before performing the assertion. By ensuring the DOM is in the expected state, the test becomes deterministic without relying on implicit timing."
+    }
+  ],
+  "confidence": {
+    "level": "high",
+    "reason": "Both fixes directly address the asynchronous loading that caused the flaky assertion."
+  }
+}

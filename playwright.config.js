@@ -8,13 +8,18 @@ const { defineConfig } = require('@playwright/test');
 const targetFile = process.env.PLAYWRIGHT_TEST_FILE
   ? path.resolve(__dirname, process.env.PLAYWRIGHT_TEST_FILE)
   : null;
+const targetPattern = targetFile
+  ? new RegExp(`^${targetFile.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&').replace(/\\\\/g, '[\\\\/]')}$`)
+  : null;
 
 /**
  * @see https://playwright.dev/docs/test-configuration
  */
 module.exports = defineConfig({
-  testDir: targetFile ? path.dirname(targetFile) : './',
-  testMatch: targetFile ? path.basename(targetFile) : '**/*.{test,spec}.{js,ts,mjs}',
+  testDir: './',
+  // Match the complete resolved path. A basename would accidentally run archived
+  // uploads and extracted repositories that happen to have the same file name.
+  testMatch: targetPattern || '**/*.{test,spec}.{js,ts,mjs}',
   testIgnore: ['**/node_modules/**', '**/dashboard/**'],
   use: {
     headless: true,

@@ -2,213 +2,89 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 
-async function diagnose(baselineInput, retryContext, outputFileArg) {
-  let results;
-  if (baselineInput && typeof baselineInput === 'object') {
-    results = baselineInput;
-  } else {
-    const inputFile = (typeof baselineInput === 'string' && baselineInput) || process.argv[2] || 'results.json';
-    const resultsPath = path.join(__dirname, inputFile);
-    if (!fs.existsSync(resultsPath)) {
-      console.error(`Error: ${inputFile} not found. Run stress-test.js first.`);
-      process.exit(1);
-    }
-    results = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
-  }
-
-  let testCode = results.testCode || results.sourceCode || results.originalCode;
-  if (!testCode && results.targetTest && fs.existsSync(path.resolve(__dirname, results.targetTest))) {
-    testCode = fs.readFileSync(path.resolve(__dirname, results.targetTest), 'utf8');
-  }
-  const sampleFailure = results.sampleFailure;
-
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    console.error('Error: GEMINI_API_KEY not found in environment or .env');
-    console.error('Please create a .env file with GEMINI_API_KEY=your_api_key');
-    process.exit(1);
-  }
-
-  let prompt = `Analyze this flaky Playwright test and its failure output:
-
-Flaky Test Code:
-${testCode}
-
-Sample Failure Output:
-${sampleFailure}
-`;
-
-  if (retryContext) {
-    prompt += `\nPrevious Attempt Context (Self-Correction Retry):\n`;
-    if (typeof retryContext === 'string') {
-      prompt += `${retryContext}\n`;
-    } else {
-      if (retryContext.previousWinnerCandidate) {
-        prompt += `Previous Winner: Candidate ${retryContext.previousWinnerCandidate}\n`;
-      }
-      if (retryContext.previousFixedCode) {
-        prompt += `Previous Fix Attempted:\n${retryContext.previousFixedCode}\n\n`;
-      }
-      if (retryContext.newFailureOutput) {
-        prompt += `New Failure Output After Applying Previous Fix in Confirmation Test:\n${retryContext.newFailureOutput}\n\n`;
-      }
-      if (retryContext.note) {
-        prompt += `Note / Guidance:\n${retryContext.note}\n\n`;
-      }
-    }
-  }
-
-  prompt += `
-Respond with ONLY raw JSON (no markdown fences, no formatting like \`\`\`json, no preamble or extra text) containing exactly these keys:
-- "cause": a short uppercase snake_case label (e.g. "RACE_CONDITION")
-- "explanation": a plain-language reason for the flakiness
-- "candidates": an array of EXACTLY 2 candidate fix objects. Each object MUST contain:
-  - "fixedCode": the complete, corrected test code ready to execute, using a genuinely different approach (e.g. one using web-first auto-retrying assertions, another using an alternative locator/wait or event-driven strategy)
-  - "rationale": a plain-language explanation of why and how this specific candidate approach resolves the flakiness
-- "confidence": an object with exactly two keys:
-  - "level": one of exactly "low", "medium", or "high" (lowercase, no other values) — how confident you are these candidates will actually eliminate the flakiness, based on how directly the sample failure output supports the diagnosed cause
-  - "reason": one short sentence explaining that confidence level
-`;
-
-  const modelName = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-
-  // Do not leave the dashboard locked for ten minutes when the API is
-  // unavailable. These values can still be overridden for slower deployments.
-  const maxRetries = parseInt(process.env.GEMINI_MAX_RETRIES, 10) || 3;
-  const retryBaseMs = parseInt(process.env.GEMINI_RETRY_BASE_MS, 10) || 2000;
-  const validLevels = ['low', 'medium', 'high'];
-  let diagnosis = null;
-  const liveServerUrl = `http://localhost:${process.env.PORT || 4000}`;
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    // Acquire the Gemini lock so concurrent verify-loop processes don't
-    // stampede the API.  The lock endpoint itself rate-limits by waiting
-    // MIN_GEMINI_GAP_MS between grants.
-    console.log(`[diagnose] Acquiring Gemini lock (attempt ${attempt}/${maxRetries})...`);
-    let hasLock = false;
-    try {
-      const lockRes = await fetch(`${liveServerUrl}/gemini-lock`, { method: 'POST' });
-      if (lockRes.ok) hasLock = true;
-    } catch (e) {
-      console.warn(`[diagnose] live-server not running, proceeding without lock`);
-    }
-
-    console.log(`[diagnose] Sending request to Gemini...`);
-    const controller = new AbortController();
-    const timeout = parseInt(process.env.GEMINI_TIMEOUT_MS, 10) || 30000;
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
-    let response;
-    let fetchError = null;
-
-    try {
-      response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: 'application/json' },
-        }),
-        signal: controller.signal,
-      });
-    } catch (err) {
-      fetchError = err;
-    } finally {
-      clearTimeout(timeoutId);
-      if (hasLock) {
-        try { await fetch(`${liveServerUrl}/gemini-unlock`, { method: 'POST' }); } catch (e) {}
-      }
-    }
-
-    if (fetchError) {
-      if (fetchError.name === 'AbortError') {
-        console.warn(`[diagnose] Request timed out after ${timeout}ms.`);
-        continue;
-      }
-      throw fetchError;
-    }
-
-    console.log(`[diagnose] Response received — status ${response.status}`);
-
-    if (!response.ok) {
-      if (response.status === 503 || response.status === 429) {
-        const waitMs = attempt * retryBaseMs;
-        console.warn(`Gemini API busy (${response.status}). Retrying in ${waitMs / 1000}s... (attempt ${attempt}/${maxRetries})`);
-        await new Promise((r) => setTimeout(r, waitMs));
-        continue;
-      }
-      const errText = await response.text();
-      console.error(`API error (${response.status}):`, errText);
-      process.exit(1);
-    }
-
-    const data = await response.json();
-    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (!rawText) {
-      console.warn('[diagnose] Empty response body from Gemini, retrying...');
-      continue;
-    }
-
-    let cleaned = rawText.trim();
-    const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-    if (fenceMatch) {
-      cleaned = fenceMatch[1].trim();
-    } else if (cleaned.includes('{') && cleaned.includes('}')) {
-      const start = cleaned.indexOf('{');
-      const end = cleaned.lastIndexOf('}');
-      cleaned = cleaned.slice(start, end + 1);
-    }
-
-    let parsed;
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch (err) {
-      console.warn(`[diagnose] Response was not valid JSON, retrying... (${err.message})`);
-      continue;
-    }
-
-    const hasValidCandidates = Array.isArray(parsed.candidates) && parsed.candidates.length >= 2
-      && parsed.candidates.every(c => typeof c.fixedCode === 'string' && typeof c.rationale === 'string');
-    const hasValidConfidence = parsed.confidence
-      && validLevels.includes(parsed.confidence.level)
-      && typeof parsed.confidence.reason === 'string';
-
-    if (!hasValidCandidates || !hasValidConfidence) {
-      console.warn(`[diagnose] Response missing required fields (candidates valid: ${hasValidCandidates}, confidence valid: ${hasValidConfidence}), retrying...`);
-      continue;
-    }
-
-    diagnosis = parsed;
-    break;
-  }
-
-  if (!diagnosis) {
-    console.error(`[diagnose] Gemini failed to return a valid, complete diagnosis after ${maxRetries} attempts.`);
-    console.error('Not writing a fabricated result — check the API key/model/prompt instead of retrying blindly.');
-    process.exit(1);
-  }
-
-  console.log(diagnosis);
-
-  // Explicit outputFileArg (used when called as a function from verify-loop.js)
-  // takes priority over CLI argv, which is only relevant when run directly.
-  const outputFile = outputFileArg || process.argv[3] || 'diagnosis-output.json';
-  fs.writeFileSync(
-    path.join(__dirname, outputFile),
-    JSON.stringify(diagnosis, null, 2),
-    'utf8'
-  );
-  console.log(`Diagnosis saved to ${outputFile}`);
-
-  return diagnosis;
+const DEFAULT_MODEL = 'openai/gpt-oss-120b';
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const configNumber = (name, fallback) => {
+  const value = Number.parseInt(process.env[name], 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+};
+function readJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch (error) { throw new Error(`Could not read valid JSON from ${file}: ${error.message}`); }
 }
-
-module.exports = { diagnose };
-
-if (require.main === module) {
-  diagnose().catch((err) => {
-    console.error('Diagnosis failed:', err);
-    process.exit(1);
-  });
+function writeJsonAtomically(file, value) {
+  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(value, null, 2), 'utf8');
+  fs.renameSync(temporary, file);
 }
+function normalizeArgs(input, retryContext, outputFile) {
+  if (input && typeof input === 'object' && !Array.isArray(input) && input.inputFile) return { results: readJson(path.resolve(__dirname, input.inputFile)), retryContext: input.previousAttempts || input.retryContext || null, outputPath: path.resolve(__dirname, input.outputFile || 'diagnosis-output.json') };
+  if (input && typeof input === 'object' && !Array.isArray(input)) return { results: input, retryContext: retryContext || null, outputPath: path.resolve(__dirname, outputFile || 'diagnosis-output.json') };
+  return { results: readJson(path.resolve(__dirname, input || process.argv[2] || 'results.json')), retryContext: retryContext || null, outputPath: path.resolve(__dirname, outputFile || process.argv[3] || 'diagnosis-output.json') };
+}
+function buildPrompt(results, retryContext) {
+  const testCode = results.testCode || results.sourceCode || results.originalCode || '';
+  if (!testCode.trim()) throw new Error('Baseline results contain no test source code.');
+  const retry = retryContext ? `\nPrevious attempt context (avoid repeating its failed approach):\n${JSON.stringify(retryContext, null, 2)}` : '';
+  const failureOutput = String(results.sampleFailure || 'No failure output was captured.').slice(0, 3000);
+  return `Analyze the flaky Playwright test below. Preserve its intended behavior, URLs, selectors, imports, and test structure. Only change what is necessary to remove demonstrated flakiness. Do not invent application behavior, URLs, selectors, or endpoints.\n\nTEST:\n${testCode}\n\nFAILURE OUTPUT:\n${failureOutput}${retry}\n\nReturn only a JSON object with exactly this schema:\n{"cause":"SHORT_UPPERCASE_SNAKE_CASE_LABEL","explanation":"plain-language explanation","candidates":[{"fixedCode":"complete executable Playwright test code","rationale":"why it fixes the flake"},{"fixedCode":"complete executable Playwright test code","rationale":"why this distinct approach fixes the flake"}],"confidence":{"level":"low|medium|high","reason":"short reason"}}\nThere must be exactly two candidates. fixedCode must be complete code, not Markdown or a link.`;
+}
+function parseResponse(raw) { return JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')); }
+function validateDiagnosis(value, originalCode = '') {
+  const valid = (item) => typeof item === 'string' && item.trim().length > 0;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'response is not an object';
+  if (!valid(value.cause) || !valid(value.explanation)) return 'cause or explanation is missing';
+  if (!Array.isArray(value.candidates) || value.candidates.length !== 2) return 'exactly two candidates are required';
+  if (!value.candidates.every((candidate) => candidate && valid(candidate.fixedCode) && valid(candidate.rationale))) return 'a candidate is incomplete';
+  if (value.candidates.some((candidate) => /\[[^\]]+\]\(https?:\/\//i.test(candidate.fixedCode) || /```/.test(candidate.fixedCode))) return 'candidate code contains Markdown';
+  const urls = (text) => new Set((text.match(/https?:\/\/[^'"`\s)]+/g) || []));
+  const originalUrls = urls(originalCode);
+  for (const candidate of value.candidates) {
+    for (const url of urls(candidate.fixedCode)) if (!originalUrls.has(url)) return `candidate invents URL ${url}`;
+  }
+  const paths = (text) => new Set(Array.from(text.matchAll(/['"](\/[A-Za-z0-9_./?=&%-]+)['"]/g), (match) => match[1]));
+  const originalPaths = paths(originalCode);
+  for (const candidate of value.candidates) {
+    for (const endpoint of paths(candidate.fixedCode)) if (!originalPaths.has(endpoint)) return `candidate invents endpoint ${endpoint}`;
+  }
+  if (!value.confidence || !['low', 'medium', 'high'].includes(value.confidence.level) || !valid(value.confidence.reason)) return 'confidence is invalid';
+  return null;
+}
+async function requestLock(port) {
+  const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 5000);
+  try { const response = await fetch(`http://localhost:${port}/ai-lock`, { method: 'POST', signal: controller.signal }); return response.ok ? (await response.json()).token || null : null; }
+  catch { return null; } finally { clearTimeout(timer); }
+}
+async function releaseLock(port, token) {
+  if (!token) return;
+  try { await fetch(`http://localhost:${port}/ai-unlock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) }); } catch { /* server is optional */ }
+}
+async function diagnose(input, retryContext, outputFile) {
+  const { results, retryContext: context, outputPath } = normalizeArgs(input, retryContext, outputFile);
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) throw new Error('GROQ_API_KEY is not set in the environment or .env file.');
+  const prompt = buildPrompt(results, context), attempts = configNumber('GROQ_MAX_RETRIES', 2) + 1, baseDelay = configNumber('GROQ_RETRY_BASE_MS', 2000), timeoutMs = configNumber('GROQ_TIMEOUT_MS', 45000), port = process.env.PORT || 4000;
+  let lastError = 'Groq did not return a valid diagnosis.';
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const token = await requestLock(port), controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      console.log(`[diagnose] Groq request ${attempt}/${attempts}...`);
+      const response = await fetch(GROQ_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, body: JSON.stringify({ model: process.env.GROQ_MODEL || DEFAULT_MODEL, messages: [{ role: 'user', content: prompt }], temperature: 0.2, max_completion_tokens: 2500, response_format: { type: 'json_object' } }), signal: controller.signal });
+      console.log(`[diagnose] Groq response status: ${response.status}`);
+      if (response.ok) {
+        const raw = (await response.json()).choices?.[0]?.message?.content;
+        if (!raw) throw new Error('Groq returned no message content.');
+        const diagnosis = parseResponse(raw), invalid = validateDiagnosis(diagnosis, results.testCode || results.sourceCode || results.originalCode || '');
+        if (invalid) throw new Error(`Groq returned an invalid diagnosis: ${invalid}.`);
+        writeJsonAtomically(outputPath, diagnosis); console.log(`[diagnose] Diagnosis saved to ${path.basename(outputPath)}`); return diagnosis;
+      }
+      lastError = `Groq returned HTTP ${response.status}: ${(await response.text()).slice(0, 1000)}`;
+      if (![429, 500, 502, 503, 504].includes(response.status)) break;
+    } catch (error) { lastError = error.name === 'AbortError' ? `Groq request timed out after ${timeoutMs}ms.` : error.message; }
+    finally { clearTimeout(timer); await releaseLock(port, token); }
+    if (attempt < attempts) { const wait = baseDelay * (2 ** (attempt - 1)); console.warn(`[diagnose] ${lastError} Retrying in ${wait}ms.`); await new Promise((resolve) => setTimeout(resolve, wait)); }
+  }
+  throw new Error(`Diagnosis failed without writing an output file: ${lastError}`);
+}
+module.exports = { diagnose, validateDiagnosis };
+if (require.main === module) diagnose().catch((error) => { console.error(`Diagnosis failed: ${error.message}`); process.exitCode = 1; });

@@ -1,0 +1,18 @@
+{
+  "cause": "RACE_CONDITION",
+  "explanation": "The test reads the result immediately after clicking, but the data loads asynchronously, so the element may still be empty, causing flakiness.",
+  "candidates": [
+    {
+      "fixedCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data on button click', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  await expect(page.locator('#result')).toHaveText('Data Loaded', { timeout: 5000 });\n});",
+      "rationale": "Using Playwright's built‑in expect with toHaveText waits until the element contains the expected text, eliminating the race."
+    },
+    {
+      "fixedCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data on button click', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  await page.waitForFunction(() => {\n    const el = document.querySelector('#result');\n    return el && el.textContent === 'Data Loaded';\n  }, null, { timeout: 5000 });\n  const text = await page.textContent('#result');\n  expect(text).toBe('Data Loaded');\n});",
+      "rationale": "Explicitly waiting for the DOM condition ensures the text is present before assertion, fixing the flake."
+    }
+  ],
+  "confidence": {
+    "level": "high",
+    "reason": "Common async loading issue"
+  }
+}

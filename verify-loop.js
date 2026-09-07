@@ -1,223 +1,69 @@
-const { execSync } = require('child_process');
+require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { diagnose } = require('./diagnose');
-
+const { runStressTest } = require('./stress-test');
+const count = (name, fallback) => { const value = Number.parseInt(process.env[name], 10); return Number.isFinite(value) && value > 0 ? value : fallback; };
+const BASELINE_RUNS = count('BASELINE_RUNS', 5), CANDIDATE_RUNS = count('CANDIDATE_RUNS', 3), CONFIRMATION_RUNS = count('CONFIRMATION_RUNS', 5), MAX_ATTEMPTS = count('MAX_DIAGNOSIS_ATTEMPTS', 3);
+function writeJson(file, value) { fs.writeFileSync(path.join(__dirname, file), JSON.stringify(value, null, 2), 'utf8'); }
+function remove(file) { try { fs.rmSync(path.join(__dirname, file), { force: true }); } catch { /* stale output is not fatal */ } }
+function resultRecord(number, candidate, results, executionError) { return { candidateNumber: number, rationale: candidate.rationale, fixedCode: candidate.fixedCode, executable: !executionError, executionError: executionError || null, flakeRate: results ? results.flakeRate : null, flakeRatePercent: results ? results.flakeRate * 100 : null, totalRuns: results ? results.totalRuns : 0, failures: results ? results.failures : 0, runResults: results ? results.runResults : [] }; }
+function isBetter(left, right) { return !right || left.flakeRate < right.flakeRate || (left.flakeRate === right.flakeRate && left.failures < right.failures); }
 async function main() {
-  const targetTest = process.argv[2] || 'uploaded.test.js';
-  const namespace = process.argv[3] || path.basename(targetTest, '.test.js');
-  const f = (name) => `${namespace}-${name}`;
-  const baselineRuns = parseInt(process.env.BASELINE_RUNS, 10) || 50;
-  const candidateRuns = parseInt(process.env.CANDIDATE_RUNS, 10) || 15;
-  const confirmationRuns = parseInt(process.env.CONFIRMATION_RUNS, 10) || baselineRuns;
-
-  console.log(`=== Starting Self-Correction Verify Loop (2-Candidate Tournament) [${namespace}] ===\n`);
-
-  const staleFiles = [
-    f('before-results.json'),
-    f('after-results.json'),
-    f('results.json'),
-    f('diagnosis-output.json'),
-    f('verify-loop-output.json'),
-    f('verify-summary.json'),
-    f('candidate-1.test.js'),
-    f('candidate-1-results.json'),
-    f('candidate-2.test.js'),
-    f('candidate-2-results.json'),
-    f('fixed.test.js'),
-  ];
-  for (const file of staleFiles) {
-    const filePath = path.join(__dirname, file);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-      console.log(`Cleared stale file: ${file}`);
-    }
+  const targetArgument = process.argv[2], namespace = process.argv[3] || 'verify';
+  if (!targetArgument) throw new Error('Usage: node verify-loop.js <test-file> [namespace]');
+  const targetPath = path.resolve(__dirname, targetArgument);
+  if (!fs.existsSync(targetPath)) throw new Error(`Test file not found: ${targetArgument}`);
+  const backupPath = `${targetPath}.flaky-court.backup`;
+  // Recover first if an earlier process was interrupted during an in-place trial.
+  if (fs.existsSync(backupPath)) {
+    fs.copyFileSync(backupPath, targetPath);
+    fs.rmSync(backupPath, { force: true });
+    console.warn(`Recovered the original test from ${path.basename(backupPath)}.`);
   }
-
-  console.log(`Running: node stress-test.js ${targetTest} ${f('before-results.json')} before-${namespace} ${baselineRuns}`);
-  execSync(`node stress-test.js ${targetTest} ${f('before-results.json')} before-${namespace} ${baselineRuns}`, {
-    stdio: 'inherit',
-    cwd: __dirname,
-  });
-  const baseline = JSON.parse(fs.readFileSync(path.join(__dirname, f('before-results.json')), 'utf8'));
-
-  console.log(`Baseline target: ${baseline.targetTest || targetTest}`);
-  console.log(`Baseline Flake Rate: ${(baseline.flakeRate * 100).toFixed(1)}% (${baseline.failures}/${baseline.totalRuns} failures)\n`);
-
-  // A passing baseline is already a successful outcome. Do not call the
-  // diagnosis service or invent a replacement test for code that is stable.
-  if (baseline.flakeRate === 0) {
-    const originalCode = baseline.testCode || baseline.sourceCode;
-    const stableResult = {
-      testName: baseline.targetTest || targetTest,
-      flakeRateBefore: baseline.flakeRate,
-      totalRunsBefore: baseline.totalRuns,
-      failuresBefore: baseline.failures,
-      runResults: baseline.runResults,
-      diagnosis: {
-        cause: 'NOT_FLAKY',
-        explanation: `The test passed all ${baseline.totalRuns} baseline runs, so no fix was needed.`,
-      },
-      confidence: {
-        level: 'high',
-        reason: `All ${baseline.totalRuns} independent baseline runs passed.`,
-      },
-      iterations: 0,
-      candidatesConsidered: 0,
-      attemptHistory: [],
-      originalCode,
-      fixedCode: originalCode,
-      flakeRateAfter: 0,
-      totalRunsAfter: baseline.totalRuns,
-      failuresAfter: 0,
-    };
-    fs.writeFileSync(path.join(__dirname, f('results.json')), JSON.stringify(stableResult, null, 2), 'utf8');
-    if (namespace) {
-      fs.writeFileSync(path.join(__dirname, 'results.json'), JSON.stringify(stableResult, null, 2), 'utf8');
+  const originalCode = fs.readFileSync(targetPath, 'utf8');
+  fs.writeFileSync(backupPath, originalCode, 'utf8');
+  const names = { before: `${namespace}-before-results.json`, diagnosis: `${namespace}-diagnosis-output.json`, candidate1: `${namespace}-candidate-1.test.js`, candidate2: `${namespace}-candidate-2.test.js`, candidate1Results: `${namespace}-candidate-1-results.json`, candidate2Results: `${namespace}-candidate-2-results.json`, fixed: `${namespace}-fixed.test.js`, after: `${namespace}-after-results.json`, final: `${namespace}-results.json` };
+  Object.values(names).forEach(remove);
+  let baseline, attemptHistory = [], winner = null, confirmation = null, finalDiagnosis = null, diagnosisError = null;
+  try {
+    baseline = await runStressTest({ testFile: targetPath, outputFile: names.before, phase: `before-${namespace}`, totalRuns: BASELINE_RUNS });
+    let retryContext = null;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+      let diagnosis;
+      try { diagnosis = await diagnose(baseline, retryContext, names.diagnosis); }
+      catch (error) { diagnosisError = error.message; break; }
+      finalDiagnosis = diagnosis;
+      const candidates = [];
+      for (const [index, candidate] of diagnosis.candidates.entries()) {
+        const number = index + 1, candidateFile = number === 1 ? names.candidate1 : names.candidate2, candidateResults = number === 1 ? names.candidate1Results : names.candidate2Results;
+        fs.writeFileSync(path.join(__dirname, candidateFile), candidate.fixedCode, 'utf8');
+        let tested = null, executionError = null;
+        // Test at the original path: relative imports and local configuration remain valid.
+        try { fs.writeFileSync(targetPath, candidate.fixedCode, 'utf8'); tested = await runStressTest({ testFile: targetPath, outputFile: candidateResults, phase: `candidate-${number}-${namespace}`, totalRuns: CANDIDATE_RUNS }); }
+        catch (error) { executionError = error.message; }
+        finally { fs.writeFileSync(targetPath, originalCode, 'utf8'); }
+        candidates.push(resultRecord(number, candidate, tested, executionError));
+      }
+      const usable = candidates.filter((candidate) => candidate.executable && candidate.totalRuns > 0);
+      const selected = usable.reduce((best, candidate) => isBetter(candidate, best) ? candidate : best, null);
+      const entry = { attemptNumber: attempt, cause: diagnosis.cause, explanation: diagnosis.explanation, confidence: diagnosis.confidence, candidates, winningCandidate: selected ? selected.candidateNumber : null, winnerFlakeRate: selected ? selected.flakeRate : null, confirmationFlakeRate: null, confirmationRuns: 0, confirmationFailures: 0, flakeRateAfter: null };
+      if (!selected) { attemptHistory.push(entry); retryContext = { note: 'Both generated candidates could not execute.', candidates }; continue; }
+      try { fs.writeFileSync(targetPath, selected.fixedCode, 'utf8'); confirmation = await runStressTest({ testFile: targetPath, outputFile: names.after, phase: `after-${namespace}`, totalRuns: CONFIRMATION_RUNS }); }
+      catch (error) { confirmation = null; entry.confirmationError = error.message; }
+      finally { fs.writeFileSync(targetPath, originalCode, 'utf8'); }
+      entry.confirmationFlakeRate = confirmation ? confirmation.flakeRate : null; entry.confirmationRuns = confirmation ? confirmation.totalRuns : 0; entry.confirmationFailures = confirmation ? confirmation.failures : 0; entry.flakeRateAfter = entry.confirmationFlakeRate;
+      attemptHistory.push(entry);
+      if (confirmation && confirmation.failures === 0) { winner = selected; break; }
+      retryContext = { previousWinnerCandidate: selected.candidateNumber, previousFixedCode: selected.fixedCode, newFailureOutput: confirmation?.sampleFailure || entry.confirmationError || 'Confirmation could not run.', note: 'Generate two alternatives that address the failed confirmation.' };
     }
-    console.log(`[${namespace}] Test is stable; no diagnosis or fix was required.`);
-    return;
-  }
-
-  const MAX_ATTEMPTS = 3;
-  let iterations = 0;
-  const attemptHistory = [];
-  let retryContext = null;
-
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    iterations = attempt;
-    console.log(`\n========================================`);
-    console.log(`[${namespace}] Attempt ${attempt} of ${MAX_ATTEMPTS}`);
-    console.log(`========================================`);
-
-    console.log(`Calling diagnose() to generate 2 candidates...`);
-    const diagnosis = await diagnose(baseline, retryContext, f('diagnosis-output.json'));
-
-    if (!diagnosis.candidates || !Array.isArray(diagnosis.candidates) || diagnosis.candidates.length < 2) {
-      throw new Error(`Expected at least 2 candidates from diagnose(), got: ${JSON.stringify(diagnosis.candidates)}`);
-    }
-
-    const candidate1 = diagnosis.candidates[0];
-    const candidate2 = diagnosis.candidates[1];
-
-    console.log(`\nCandidate 1 Rationale: ${candidate1.rationale}`);
-    console.log(`Candidate 2 Rationale: ${candidate2.rationale}`);
-    console.log(`Confidence: ${diagnosis.confidence.level.toUpperCase()} — ${diagnosis.confidence.reason}`);
-
-    const cand1Path = path.join(__dirname, f('candidate-1.test.js'));
-    const cand2Path = path.join(__dirname, f('candidate-2.test.js'));
-    fs.writeFileSync(cand1Path, candidate1.fixedCode, 'utf8');
-    fs.writeFileSync(cand2Path, candidate2.fixedCode, 'utf8');
-    console.log(`\nWrote ${f('candidate-1.test.js')} and ${f('candidate-2.test.js')}`);
-
-    console.log(`\n--- [${namespace}] Shootout: Testing Candidate 1 (${candidateRuns} runs) ---`);
-    execSync(`node stress-test.js ${f('candidate-1.test.js')} ${f('candidate-1-results.json')} candidate-1-${namespace} ${candidateRuns}`, {
-      stdio: 'inherit',
-      cwd: __dirname,
-    });
-    const cand1Results = JSON.parse(fs.readFileSync(path.join(__dirname, f('candidate-1-results.json')), 'utf8'));
-    console.log(`Candidate 1 Flake Rate (15 runs): ${(cand1Results.flakeRate * 100).toFixed(1)}% (${cand1Results.failures}/${cand1Results.totalRuns})`);
-
-    console.log(`\n--- [${namespace}] Shootout: Testing Candidate 2 (${candidateRuns} runs) ---`);
-    execSync(`node stress-test.js ${f('candidate-2.test.js')} ${f('candidate-2-results.json')} candidate-2-${namespace} ${candidateRuns}`, {
-      stdio: 'inherit',
-      cwd: __dirname,
-    });
-    const cand2Results = JSON.parse(fs.readFileSync(path.join(__dirname, f('candidate-2-results.json')), 'utf8'));
-    console.log(`Candidate 2 Flake Rate (15 runs): ${(cand2Results.flakeRate * 100).toFixed(1)}% (${cand2Results.failures}/${cand2Results.totalRuns})`);
-
-    let winnerIndex = 0;
-    if (cand2Results.flakeRate < cand1Results.flakeRate) {
-      winnerIndex = 1;
-    }
-    const winnerNumber = winnerIndex + 1;
-    const winningCandidate = winnerIndex === 0 ? candidate1 : candidate2;
-    const winnerResults = winnerIndex === 0 ? cand1Results : cand2Results;
-    const winnerFlakeRate15 = winnerResults.flakeRate;
-
-    console.log(`\n>>> [${namespace}] Winner of 15-run shootout: Candidate ${winnerNumber} with ${(winnerFlakeRate15 * 100).toFixed(1)}% flake rate`);
-
-    const fixedTestPath = path.join(__dirname, f('fixed.test.js'));
-    fs.writeFileSync(fixedTestPath, winningCandidate.fixedCode, 'utf8');
-    console.log(`Copied Candidate ${winnerNumber} to ${f('fixed.test.js')}`);
-
-    console.log(`\n--- [${namespace}] Running ${confirmationRuns}-run confirmation on ${f('fixed.test.js')} ---`);
-    execSync(`node stress-test.js ${f('fixed.test.js')} ${f('after-results.json')} after-${namespace} ${confirmationRuns}`, {
-      stdio: 'inherit',
-      cwd: __dirname,
-    });
-
-    const afterResults = JSON.parse(fs.readFileSync(path.join(__dirname, f('after-results.json')), 'utf8'));
-    const confirmationRate = afterResults.flakeRate;
-    console.log(`[${namespace}] 50-run Confirmation Flake Rate: ${(confirmationRate * 100).toFixed(1)}% (${afterResults.failures}/${afterResults.totalRuns})`);
-
-    const attemptRecord = {
-      attemptNumber: attempt,
-      cause: diagnosis.cause,
-      explanation: diagnosis.explanation,
-      confidence: diagnosis.confidence,
-      candidates: [
-        { candidateNumber: 1, rationale: candidate1.rationale, flakeRate15: cand1Results.flakeRate },
-        { candidateNumber: 2, rationale: candidate2.rationale, flakeRate15: cand2Results.flakeRate },
-      ],
-      winningCandidate: winnerNumber,
-      winnerFlakeRate15,
-      confirmationFlakeRate50: confirmationRate,
-      flakeRateAfter: confirmationRate,
-    };
-
-    attemptHistory.push(attemptRecord);
-
-    if (confirmationRate === 0) {
-      console.log(`\n[SUCCESS] [${namespace}] Attempt ${attempt}: Candidate ${winnerNumber} passed 50-run confirmation with 0% flakiness!`);
-      break;
-    }
-
-    console.log(`\n[RETRY NEEDED] [${namespace}] Attempt ${attempt} winner failed 50-run confirmation (${(confirmationRate * 100).toFixed(1)}% flake rate).`);
-
-    if (attempt < MAX_ATTEMPTS) {
-      console.log(`Building retryContext for attempt ${attempt + 1}...`);
-      retryContext = {
-        originalTestCode: baseline.testCode || baseline.sourceCode,
-        previousWinnerCandidate: winnerNumber,
-        previousFixedCode: winningCandidate.fixedCode,
-        previousRationale: winningCandidate.rationale,
-        winnerFlakeRate15,
-        confirmationFlakeRate50: confirmationRate,
-        newFailureOutput: afterResults.sampleFailure || 'Test failed during 50-run confirmation.',
-        note: `Candidate ${winnerNumber} (rationale: "${winningCandidate.rationale}") won the 15-run test with ${(winnerFlakeRate15 * 100).toFixed(1)}% flake rate, but failed the 50-run confirmation with ${(confirmationRate * 100).toFixed(1)}% flake rate.\nHere is the failure output from the confirmation test:\n${afterResults.sampleFailure || 'None'}\n\nPlease propose 2 NEW and DIFFERENT candidates that avoid this failure.`,
-      };
-    } else {
-      console.log(`Reached max attempts limit of ${MAX_ATTEMPTS}.`);
-    }
-  }
-
-  const loopOutput = { namespace, targetTest, iterations, attemptHistory };
-  fs.writeFileSync(path.join(__dirname, f('verify-loop-output.json')), JSON.stringify(loopOutput, null, 2), 'utf8');
-
-  const lastAttempt = attemptHistory[attemptHistory.length - 1];
-  const summary = {
-    namespace,
-    targetTest,
-    iterations,
-    candidatesConsidered: iterations * 2,
-    confidence: lastAttempt.confidence,
-    finalCause: lastAttempt.cause,
-    finalExplanation: lastAttempt.explanation,
-    flakeRateBefore: baseline.flakeRate,
-    flakeRateAfter: lastAttempt.flakeRateAfter,
-  };
-  fs.writeFileSync(path.join(__dirname, f('verify-summary.json')), JSON.stringify(summary, null, 2), 'utf8');
-
-  console.log(`\n=== [${namespace}] Verification Loop Finished ===`);
-  console.log(JSON.stringify(loopOutput, null, 2));
-  console.log(JSON.stringify(summary, null, 2));
-
-  console.log(`\n--- [${namespace}] Finalizing combined report ---`);
-  execSync(`node finalize.js ${namespace}`, { stdio: 'inherit', cwd: __dirname });
+  } finally { fs.writeFileSync(targetPath, originalCode, 'utf8'); }
+  const successful = Boolean(winner && confirmation && confirmation.failures === 0);
+  if (successful) { fs.writeFileSync(targetPath, winner.fixedCode, 'utf8'); fs.writeFileSync(path.join(__dirname, names.fixed), winner.fixedCode, 'utf8'); if (namespace === 'verify') fs.writeFileSync(path.join(__dirname, 'fixed.test.js'), winner.fixedCode, 'utf8'); }
+  fs.rmSync(backupPath, { force: true });
+  const report = { namespace, targetTest: targetArgument, testName: targetArgument, iterations: attemptHistory.length, candidatesConsidered: 2, diagnosis: finalDiagnosis ? { cause: finalDiagnosis.cause, explanation: finalDiagnosis.explanation } : null, confidence: finalDiagnosis?.confidence || null, flakeRateBefore: baseline.flakeRate, totalRunsBefore: baseline.totalRuns, failuresBefore: baseline.failures, runResults: baseline.runResults, originalCode, attemptHistory, winningCandidate: successful ? winner.candidateNumber : null, winnerFlakeRate: successful ? winner.flakeRate : null, fixedCode: successful ? winner.fixedCode : null, flakeRateAfter: confirmation?.flakeRate ?? null, totalRunsAfter: confirmation?.totalRuns ?? 0, failuresAfter: confirmation?.failures ?? 0, success: successful, failureReason: successful ? null : diagnosisError || 'No candidate completed a zero-failure confirmation run; the original test was restored.' };
+  writeJson(names.final, report); writeJson(`${namespace}-verify-summary.json`, { iterations: report.iterations, candidatesConsidered: 2, confidence: report.confidence, finalCause: report.diagnosis?.cause || null, finalExplanation: report.diagnosis?.explanation || null, success: successful }); if (namespace === 'verify') writeJson('results.json', report);
+  console.log(`Verification ${successful ? 'succeeded' : 'did not verify a fix'}; results written to ${names.final}.`); return report;
 }
-
-main().catch((err) => {
-  console.error(`verify-loop [${process.argv[3] || 'unknown'}] failed:`, err);
-  process.exit(1);
-});
+module.exports = { main };
+if (require.main === module) main().catch((error) => { console.error(`Verification loop failed: ${error.message}`); process.exitCode = 1; });

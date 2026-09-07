@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
@@ -52,42 +52,48 @@ app.post('/update', (req, res) => {
   res.sendStatus(200);
 });
 
-// --- Gemini call coordination lock ---
-// Ensures only one diagnose.js call talks to Gemini at a time, even when
+// --- AI call coordination lock ---
+// Ensures only one diagnose.js call talks to Groq at a time, even when
 // multiple verify-loop.js processes are running concurrently (repo scan).
-let geminiLockHeld = false;
-let geminiLockQueue = [];
-let lastGeminiCallTime = 0;
-const MIN_GEMINI_GAP_MS = parseInt(process.env.GEMINI_GAP_MS, 10) || 6000; // spacing between calls — tune based on your quota
-
-app.post('/gemini-lock', (req, res) => {
+let aiLockHeld = false;
+let aiLockQueue = [];
+let lastAiCallTime = 0;
+const MIN_AI_GAP_MS = parseInt(process.env.GROQ_GAP_MS, 10) || 0;
+function acquireAiLock(req, res) {
   const tryAcquire = () => {
-    if (!geminiLockHeld) {
+    if (!aiLockHeld) {
       const now = Date.now();
-      const elapsed = now - lastGeminiCallTime;
-      const wait = Math.max(0, MIN_GEMINI_GAP_MS - elapsed);
-      geminiLockHeld = true;
+      const elapsed = now - lastAiCallTime;
+      const wait = Math.max(0, MIN_AI_GAP_MS - elapsed);
+      aiLockHeld = true;
       setTimeout(() => {
-        lastGeminiCallTime = Date.now();
-        res.json({ acquired: true, waitedMs: wait });
+        lastAiCallTime = Date.now();
+        res.json({ acquired: true, waitedMs: wait, token: `${Date.now()}-${Math.random().toString(36).slice(2)}` });
       }, wait);
     } else {
-      geminiLockQueue.push(tryAcquire);
+      aiLockQueue.push(tryAcquire);
     }
   };
   tryAcquire();
-});
-
-app.post('/gemini-unlock', (req, res) => {
-  geminiLockHeld = false;
-  const next = geminiLockQueue.shift();
+}
+function releaseAiLock(req, res) {
+  aiLockHeld = false;
+  const next = aiLockQueue.shift();
   if (next) next();
   res.json({ released: true });
-});
+}
+app.post('/ai-lock', acquireAiLock);
+app.post('/ai-unlock', releaseAiLock);
+// Backwards-compatible aliases for clients from the Gemini-era UI.
+app.post('/gemini-lock', acquireAiLock);
+app.post('/gemini-unlock', releaseAiLock);
+
+let verifyRunActive = false;
 
 app.post('/run-stress-test', (req, res) => {
   const { testFile, outputFile, phase } = req.body;
-  exec(`node stress-test.js ${testFile} ${outputFile || 'results.json'} ${phase || 'before'}`, (err, stdout, stderr) => {
+  if (typeof testFile !== 'string') return res.status(400).json({ error: 'testFile is required' });
+  execFile(process.execPath, ['stress-test.js', testFile, outputFile || 'results.json', phase || 'before'], { cwd: __dirname }, (err, stdout, stderr) => {
     if (err) {
       return res.status(500).json({ error: stderr || err.message });
     }
@@ -120,14 +126,19 @@ app.post('/apply-fix', (req, res) => {
 app.post('/run-verify-loop', (req, res) => {
   const { testFile, namespace } = req.body;
   const target = testFile || 'uploaded.test.js';
-  const ns = namespace ? ` ${namespace}` : '';
+  if (typeof target !== 'string' || (namespace && typeof namespace !== 'string')) return res.status(400).json({ error: 'Invalid test file or namespace.' });
+  if (verifyRunActive) return res.status(409).json({ error: 'A trial is already running. Wait for it to finish.' });
 
   // Respond immediately — frontend listens on SSE for verify-loop-complete/error
   const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  verifyRunActive = true;
   verifyRuns.set(runId, { status: 'running', startedAt: Date.now() });
   res.json({ success: true, runId, message: 'Verify loop started' });
 
-  exec(`node verify-loop.js ${target}${ns}`, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
+  const args = ['verify-loop.js', target];
+  if (namespace) args.push(namespace);
+  execFile(process.execPath, args, { cwd: __dirname, maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
+    verifyRunActive = false;
     if (err) {
       const errMsg = (stderr || err.message || 'unknown error').slice(0, 500);
       verifyRuns.set(runId, { status: 'error', error: errMsg, finishedAt: Date.now() });
@@ -142,7 +153,8 @@ app.post('/run-verify-loop', (req, res) => {
 
 app.post('/run-diagnose', (req, res) => {
   const { inputFile, outputFile } = req.body;
-  exec(`node diagnose.js ${inputFile || 'results.json'} ${outputFile || 'diagnosis-output.json'}`, (err, stdout, stderr) => {
+  if ((inputFile && typeof inputFile !== 'string') || (outputFile && typeof outputFile !== 'string')) return res.status(400).json({ error: 'Invalid filename.' });
+  execFile(process.execPath, ['diagnose.js', inputFile || 'results.json', outputFile || 'diagnosis-output.json'], { cwd: __dirname }, (err, stdout, stderr) => {
     if (err) {
       return res.status(500).json({ error: stderr || err.message });
     }
@@ -164,7 +176,8 @@ app.post('/run-repo-scan', (req, res) => {
   repoScans.set(scanId, { status: 'running', startedAt: Date.now() });
   res.json({ success: true, scanId, message: 'Repo scan started' });
 
-  exec(`node repo-scan.js "${targetDir}" ${envConcurrency}`, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
+  if (typeof targetDir !== 'string') return res.status(400).json({ error: 'targetDir must be a string' });
+  execFile(process.execPath, ['repo-scan.js', targetDir, String(envConcurrency)], { cwd: __dirname, maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
     if (err) {
       // Push the error to all SSE clients so the frontend can surface it
       const errMsg = (stderr || err.message || 'unknown error').slice(0, 500);
@@ -178,7 +191,7 @@ app.post('/run-repo-scan', (req, res) => {
 });
 
 app.post('/run-finalize', (req, res) => {
-  exec(`node finalize.js`, (err, stdout, stderr) => {
+  execFile(process.execPath, ['finalize.js'], { cwd: __dirname }, (err, stdout, stderr) => {
     if (err) {
       return res.status(500).json({ error: stderr || err.message });
     }

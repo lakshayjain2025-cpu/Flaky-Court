@@ -1,0 +1,16 @@
+{
+  "targetTest": "C:\\Users\\laksh\\flaky-court\\upload-1788810093145-xcr83g.test.js",
+  "testCode": "const { test, expect } = require('@playwright/test');\n\ntest('submits and waits for success text', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky3.html');\n  await page.click('#submitBtn');\n  // Wait until the status element contains the expected text instead of a fixed timeout\n  await expect(page.locator('#status')).toHaveText('Success', { timeout: 3000 });\n});",
+  "sourceCode": "const { test, expect } = require('@playwright/test');\n\ntest('submits and waits for success text', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky3.html');\n  await page.click('#submitBtn');\n  // Wait until the status element contains the expected text instead of a fixed timeout\n  await expect(page.locator('#status')).toHaveText('Success', { timeout: 3000 });\n});",
+  "sampleFailure": null,
+  "totalRuns": 3,
+  "passes": 3,
+  "failures": 0,
+  "flakeRate": 0,
+  "runResults": [
+    1,
+    1,
+    1
+  ],
+  "durationSec": "4.4"
+}

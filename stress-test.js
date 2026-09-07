@@ -1,150 +1,21 @@
-const { exec } = require('child_process');
-const util = require('util');
-const execAsync = util.promisify(exec);
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 const fs = require('fs');
 const path = require('path');
-
-// Inline concurrency pool — p-limit v5+ is ESM-only and can't be require()'d
-// in a "type":"commonjs" project. This is a drop-in replacement.
-function makePLimit(concurrency) {
-  let active = 0;
-  const queue = [];
-  function dispatch() {
-    while (active < concurrency && queue.length) {
-      const { fn, resolve, reject } = queue.shift();
-      active++;
-      Promise.resolve()
-        .then(() => fn())
-        .then(
-          (v) => { active--; resolve(v); dispatch(); },
-          (e) => { active--; reject(e); dispatch(); }
-        );
-    }
-  }
-  return function limit(fn) {
-    return new Promise((resolve, reject) => {
-      queue.push({ fn, resolve, reject });
-      dispatch();
-    });
-  };
+const execFileAsync = promisify(execFile);
+const positive = (value, fallback) => { const parsed = Number.parseInt(value, 10); return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback; };
+async function notify(payload) { try { await fetch(`http://localhost:${process.env.PORT || 4000}/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); } catch { /* CLI use has no server */ } }
+async function runStressTest({ testFile, outputFile = 'results.json', phase = 'before', totalRuns = positive(process.env.STRESS_RUNS, 50) }) {
+  const resolvedTest = path.resolve(__dirname, testFile);
+  if (!fs.existsSync(resolvedTest)) throw new Error(`Test file not found: ${testFile}`);
+  const runs = positive(totalRuns, 50), concurrency = Math.min(positive(process.env.STRESS_CONCURRENCY, 1), runs), runResults = new Array(runs).fill(null);
+  let passes = 0, failures = 0, sampleFailure = null, next = 0, completed = 0; const started = Date.now();
+  const playwrightCli = require.resolve('@playwright/test/cli');
+  async function worker() { while (true) { const index = next++; if (index >= runs) return; const resultDir = path.join(__dirname, `.flaky-court-results-${process.pid}-${phase}-${index + 1}`); try { await execFileAsync(process.execPath, [playwrightCli, 'test', '--output', resultDir], { cwd: __dirname, windowsHide: true, maxBuffer: 10 * 1024 * 1024, env: { ...process.env, PLAYWRIGHT_TEST_FILE: resolvedTest } }); runResults[index] = 1; passes += 1; } catch (error) { runResults[index] = 0; failures += 1; if (!sampleFailure) sampleFailure = String(error.stdout || error.stderr || error.message).trim().slice(0, 10000); } finally { fs.rmSync(resultDir, { recursive: true, force: true }); completed += 1; await notify({ currentRun: completed, totalRuns: runs, runResults: runResults.filter((item) => item !== null), phase }); } } }
+  console.log(`Running ${runs} iteration(s) of ${testFile} (concurrency: ${concurrency})...`);
+  await Promise.all(Array.from({ length: concurrency }, worker));
+  const testCode = fs.readFileSync(resolvedTest, 'utf8'); const results = { targetTest: testFile, testCode, sourceCode: testCode, sampleFailure, totalRuns: runs, passes, failures, flakeRate: failures / runs, runResults, durationSec: ((Date.now() - started) / 1000).toFixed(1) };
+  fs.writeFileSync(path.resolve(__dirname, outputFile), JSON.stringify(results, null, 2), 'utf8'); console.log(`Completed: ${passes}/${runs} passed; ${(results.flakeRate * 100).toFixed(1)}% failed.`); return results;
 }
-
-const targetTest = process.argv[2] || 'flaky.test.js';
-const outputFile = process.argv[3] || 'results.json';
-let phase = 'before';
-let TOTAL_RUNS = parseInt(process.env.STRESS_RUNS, 10) || 50;
-
-if (process.argv[5] !== undefined && !isNaN(parseInt(process.argv[5], 10))) {
-  phase = process.argv[4] || 'before';
-  TOTAL_RUNS = parseInt(process.argv[5], 10);
-} else if (process.argv[4] !== undefined) {
-  if (!isNaN(parseInt(process.argv[4], 10))) {
-    TOTAL_RUNS = parseInt(process.argv[4], 10);
-    phase = 'before';
-  } else {
-    phase = process.argv[4];
-  }
-}
-
-const CONCURRENCY = parseInt(process.env.STRESS_CONCURRENCY, 10) || 6; // how many browser tests run at once — tune based on your machine
-const limit = makePLimit(CONCURRENCY);
-
-let passes = 0;
-let failures = 0;
-let sampleFailure = null;
-let runResults = new Array(TOTAL_RUNS).fill(null);
-let completedCount = 0;
-
-console.log(`Running stress test: ${TOTAL_RUNS} iterations of ${targetTest} (concurrency: ${CONCURRENCY})...\n`);
-
-async function sendUpdate(payload) {
-  try {
-    await fetch('http://localhost:4000/update', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-  } catch (e) {
-    // live server might not be running — ignore silently
-  }
-}
-
-function runOne(i) {
-  return limit(async () => {
-    try {
-            await execAsync(`npx playwright test --output=test-results-${phase}-${i}-${process.pid}`, {
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          PLAYWRIGHT_TEST_FILE: targetTest,
-        },
-      });      passes++;
-      runResults[i - 1] = 1;
-      console.log(`Run ${i}/${TOTAL_RUNS}: PASS`);
-    } catch (error) {
-      failures++;
-      runResults[i - 1] = 0;
-      console.log(`Run ${i}/${TOTAL_RUNS}: FAIL`);
-      if (!sampleFailure) {
-        const stdout = error.stdout ? error.stdout.toString() : '';
-        const stderr = error.stderr ? error.stderr.toString() : '';
-        sampleFailure = (stdout || stderr || error.message).trim();
-      }
-    }
-    completedCount++;
-    // Send a live update using only the runs completed so far, in order
-    const completedSoFar = runResults.filter((r) => r !== null);
-    await sendUpdate({ currentRun: completedCount, totalRuns: TOTAL_RUNS, runResults: completedSoFar, phase });
-  });
-}
-
-async function runLoop() {
-  const tasks = [];
-  for (let i = 1; i <= TOTAL_RUNS; i++) {
-    tasks.push(runOne(i));
-  }
-  await Promise.all(tasks);
-}
-
-(async () => {
-  const startTime = Date.now();
-  await runLoop();
-  const durationSec = ((Date.now() - startTime) / 1000).toFixed(1);
-
-  const flakeRate = failures / TOTAL_RUNS;
-  const testCode = fs.readFileSync(path.resolve(__dirname, targetTest), 'utf8');
-  const results = {
-    targetTest,
-    testCode,
-    sourceCode: testCode,
-    sampleFailure,
-    totalRuns: TOTAL_RUNS,
-    passes,
-    failures,
-    flakeRate,
-    runResults,
-    durationSec,
-  };
-
-  fs.writeFileSync(
-    path.join(__dirname, outputFile),
-    JSON.stringify(results, null, 2),
-    'utf8'
-  );
-
-  console.log('\n--- Stress Test Completed ---');
-  console.log(`Target:     ${targetTest}`);
-  console.log(`Total Runs: ${TOTAL_RUNS}`);
-  console.log(`Passes:     ${passes}`);
-  console.log(`Failures:   ${failures}`);
-  console.log(`Flake Rate: ${(flakeRate * 100).toFixed(1)}%`);
-  console.log(`Duration:   ${durationSec}s`);
-  console.log(`Results written to ${outputFile}`);
-    // Clean up per-run temp output folders
-  for (let i = 1; i <= TOTAL_RUNS; i++) {
-    const dir = path.join(__dirname, `test-results-${phase}-${i}-${process.pid}`);
-    if (fs.existsSync(dir)) {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  }
-})();
+module.exports = { runStressTest };
+if (require.main === module) { const [, , testFile = 'flaky.test.js', outputFile = 'results.json', phase = 'before', requestedRuns] = process.argv; runStressTest({ testFile, outputFile, phase, totalRuns: requestedRuns || process.env.STRESS_RUNS }).catch((error) => { console.error(`Stress test failed: ${error.message}`); process.exitCode = 1; }); }

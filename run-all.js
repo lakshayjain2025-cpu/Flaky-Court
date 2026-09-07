@@ -1,23 +1,4 @@
-const { execSync } = require('child_process');
-
-function run(command) {
-  console.log(`\n▶ Running: ${command}\n`);
-  execSync(command, { stdio: 'inherit' });
-}
-
-console.log('=== FLAKY COURT: Full Pipeline ===\n');
-
-console.log('STEP 1: Stress-testing the original test...');
-run('node stress-test.js flaky.test.js');
-
-console.log('\nSTEP 2: Diagnosing root cause with AI...');
-run('node diagnose.js');
-
-console.log('\nSTEP 3: Applying AI-suggested fix and re-validating...');
-run('node stress-test.js flaky-fixed.test.js');
-
-console.log('\nSTEP 4: Finalizing combined report...');
-run('node finalize.js');
-
-console.log('\n=== PIPELINE COMPLETE ===');
-console.log('Results written to results.json');
+const { runPipeline } = require('./pipeline');
+runPipeline({ testFile: process.argv[2] || 'flaky.test.js', namespace: process.argv[3] || 'verify' })
+  .then((result) => { if (!result.success) process.exitCode = 1; })
+  .catch((error) => { console.error(`Pipeline failed: ${error.message}`); process.exitCode = 1; });

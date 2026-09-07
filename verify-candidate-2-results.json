@@ -1,0 +1,16 @@
+{
+  "targetTest": "C:\\Users\\laksh\\flaky-court\\upload-1788810093145-xcr83g.test.js",
+  "testCode": "const { test, expect } = require('@playwright/test');\n\ntest('submits and polls for success', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky3.html');\n  await page.click('#submitBtn');\n  // Poll the DOM until the status text becomes 'Success'\n  await page.waitForFunction(() => {\n    const el = document.querySelector('#status');\n    return el && el.textContent === 'Success';\n  }, null, { timeout: 3000 });\n  const text = await page.textContent('#status');\n  expect(text).toBe('Success');\n});",
+  "sourceCode": "const { test, expect } = require('@playwright/test');\n\ntest('submits and polls for success', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky3.html');\n  await page.click('#submitBtn');\n  // Poll the DOM until the status text becomes 'Success'\n  await page.waitForFunction(() => {\n    const el = document.querySelector('#status');\n    return el && el.textContent === 'Success';\n  }, null, { timeout: 3000 });\n  const text = await page.textContent('#status');\n  expect(text).toBe('Success');\n});",
+  "sampleFailure": null,
+  "totalRuns": 3,
+  "passes": 3,
+  "failures": 0,
+  "flakeRate": 0,
+  "runResults": [
+    1,
+    1,
+    1
+  ],
+  "durationSec": "4.4"
+}

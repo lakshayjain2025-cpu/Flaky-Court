@@ -1,0 +1,14 @@
+{
+  "targetTest": "stable.test.js",
+  "testCode": "const { test, expect } = require('@playwright/test');\r\n\r\ntest('loads data reliably', async ({ page }) => {\r\n  await page.goto('http://localhost:8080/flaky.html');\r\n  await page.click('#loadBtn');\r\n  await expect(page.locator('#result')).toHaveText('Data Loaded');\r\n});",
+  "sourceCode": "const { test, expect } = require('@playwright/test');\r\n\r\ntest('loads data reliably', async ({ page }) => {\r\n  await page.goto('http://localhost:8080/flaky.html');\r\n  await page.click('#loadBtn');\r\n  await expect(page.locator('#result')).toHaveText('Data Loaded');\r\n});",
+  "sampleFailure": null,
+  "totalRuns": 1,
+  "passes": 1,
+  "failures": 0,
+  "flakeRate": 0,
+  "runResults": [
+    1
+  ],
+  "durationSec": "1.8"
+}

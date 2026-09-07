@@ -1,0 +1,11 @@
+{
+  "iterations": 1,
+  "candidatesConsidered": 2,
+  "confidence": {
+    "level": "high",
+    "reason": "The root cause is clearly identified and both fixes replace the brittle timeout with deterministic waiting."
+  },
+  "finalCause": "FLAKY_FIXED_TIMEOUT",
+  "finalExplanation": "The test relies on a hard‑coded 100 ms pause, but the UI update can take up to 250 ms, so the status element is often still empty when the assertion runs, causing intermittent failures.",
+  "success": true
+}

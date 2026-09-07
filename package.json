@@ -4,7 +4,11 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node live-server.js",
+    "stress": "node stress-test.js",
+    "diagnose": "node diagnose.js",
+    "verify": "node verify-loop.js",
+    "test": "node stress-test.js stable.test.js smoke-results.json smoke 1"
   },
   "repository": {
     "type": "git",
@@ -28,6 +32,7 @@
     "diff": "^9.0.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "groq-sdk": "^1.6.0",
     "multer": "^2.3.0",
     "p-limit": "^7.3.2"
   }

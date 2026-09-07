@@ -1,0 +1,18 @@
+{
+  "cause": "ELEMENT_NOT_READY_AFTER_CLICK",
+  "explanation": "The test clicks the button and immediately reads the text, but the data is loaded asynchronously, so the element often still contains an empty string when the assertion runs, causing flakiness.",
+  "candidates": [
+    {
+      "fixedCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data on button click', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  // Playwright's expect will automatically retry until the text matches or timeout expires.\n  await expect(page.locator('#result')).toHaveText('Data Loaded', { timeout: 5000 });\n});",
+      "rationale": "Using expect(...).toHaveText leverages Playwright's built‑in auto‑retry, waiting for the asynchronous load to finish before asserting, which eliminates the race condition."
+    },
+    {
+      "fixedCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data on button click', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  // Explicitly wait for the element's text content to become the expected value.\n  await page.waitForFunction(() => {\n    const el = document.querySelector('#result');\n    return el && el.textContent === 'Data Loaded';\n  }, null, { timeout: 5000 });\n  const text = await page.textContent('#result');\n  expect(text).toBe('Data Loaded');\n});",
+      "rationale": "waitForFunction polls the page until the '#result' element contains the expected text, guaranteeing the DOM is updated before the final assertion; this explicit wait also resolves the flakiness."
+    }
+  ],
+  "confidence": {
+    "level": "high",
+    "reason": "The root cause is a missing wait for async UI update, and both candidates directly address it with reliable waiting mechanisms."
+  }
+}
