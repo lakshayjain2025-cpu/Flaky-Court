@@ -18,6 +18,9 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": "24"
+  },
   "bugs": {
     "url": "https://github.com/lakshayjain2025-cpu/Flaky-Court/issues"
   },
