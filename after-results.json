@@ -1,3 +1,4 @@
+
 {
   "targetTest": "fixed.test.js",
   "testCode": "const { test, expect } = require('@playwright/test');\n\ntest('loads data on button click', async ({ page }) => {\n  await page.goto('http://localhost:8080/flaky.html');\n  await page.click('#loadBtn');\n  await expect(page.locator('#result')).toHaveText('Data Loaded');\n});",
