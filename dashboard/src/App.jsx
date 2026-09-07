@@ -419,6 +419,7 @@ function App() {
                 const error = repoErrors.find(e => e.file === file);
                 const isFinished = !!result || !!error;
                 const isExpanded = expandedRepoRow === file;
+                const outcome = result?.status || (result?.success ? 'fixed' : result ? 'unverified' : null);
                 
                 return (
                   <React.Fragment key={idx}>
@@ -426,13 +427,13 @@ function App() {
                       <td>{file}</td>
                       <td>
                         {!isFinished ? (loading ? 'Running...' : 'Pending') : (
-                          error ? 'Failed' : 'Success'
+                          error ? 'Failed' : outcome === 'fixed' ? 'Fixed' : outcome === 'stable' ? 'Stable' : 'Needs review'
                         )}
                       </td>
                       <td>{result ? `${(result.flakeRateBefore * 100).toFixed(0)}%` : '-'}</td>
-                      <td>{result ? `${(result.flakeRateAfter * 100).toFixed(0)}%` : '-'}</td>
-                      <td>{result && result.diagnosis ? result.diagnosis.cause : '-'}</td>
-                      <td>{result && result.confidence ? result.confidence.level : '-'}</td>
+                      <td>{typeof result?.flakeRateAfter === 'number' ? `${(result.flakeRateAfter * 100).toFixed(0)}%` : '—'}</td>
+                      <td>{result?.diagnosis?.cause || (outcome === 'stable' ? 'ALREADY_STABLE' : '—')}</td>
+                      <td>{result?.confidence?.level || '—'}</td>
                       <td>{result ? result.iterations : '-'}</td>
                     </tr>
                     {isExpanded && result && (

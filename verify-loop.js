@@ -28,8 +28,10 @@ async function main() {
   let baseline, attemptHistory = [], winner = null, confirmation = null, finalDiagnosis = null, diagnosisError = null;
   try {
     baseline = await runStressTest({ testFile: targetPath, outputFile: names.before, phase: `before-${namespace}`, totalRuns: BASELINE_RUNS });
-    let retryContext = null;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    // A test that passes every baseline run has no demonstrated flake to diagnose.
+    if (baseline.failures > 0) {
+      let retryContext = null;
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
       let diagnosis;
       try { diagnosis = await diagnose(baseline, retryContext, names.diagnosis); }
       catch (error) { diagnosisError = error.message; break; }
@@ -55,15 +57,17 @@ async function main() {
       entry.confirmationFlakeRate = confirmation ? confirmation.flakeRate : null; entry.confirmationRuns = confirmation ? confirmation.totalRuns : 0; entry.confirmationFailures = confirmation ? confirmation.failures : 0; entry.flakeRateAfter = entry.confirmationFlakeRate;
       attemptHistory.push(entry);
       if (confirmation && confirmation.failures === 0) { winner = selected; break; }
-      retryContext = { previousWinnerCandidate: selected.candidateNumber, previousFixedCode: selected.fixedCode, newFailureOutput: confirmation?.sampleFailure || entry.confirmationError || 'Confirmation could not run.', note: 'Generate two alternatives that address the failed confirmation.' };
+        retryContext = { previousWinnerCandidate: selected.candidateNumber, previousFixedCode: selected.fixedCode, newFailureOutput: confirmation?.sampleFailure || entry.confirmationError || 'Confirmation could not run.', note: 'Generate two alternatives that address the failed confirmation.' };
+      }
     }
   } finally { fs.writeFileSync(targetPath, originalCode, 'utf8'); }
   const successful = Boolean(winner && confirmation && confirmation.failures === 0);
+  const status = baseline.failures === 0 ? 'stable' : successful ? 'fixed' : 'unverified';
   if (successful) { fs.writeFileSync(targetPath, winner.fixedCode, 'utf8'); fs.writeFileSync(path.join(__dirname, names.fixed), winner.fixedCode, 'utf8'); if (namespace === 'verify') fs.writeFileSync(path.join(__dirname, 'fixed.test.js'), winner.fixedCode, 'utf8'); }
   fs.rmSync(backupPath, { force: true });
-  const report = { namespace, targetTest: targetArgument, testName: targetArgument, iterations: attemptHistory.length, candidatesConsidered: 2, diagnosis: finalDiagnosis ? { cause: finalDiagnosis.cause, explanation: finalDiagnosis.explanation } : null, confidence: finalDiagnosis?.confidence || null, flakeRateBefore: baseline.flakeRate, totalRunsBefore: baseline.totalRuns, failuresBefore: baseline.failures, runResults: baseline.runResults, originalCode, attemptHistory, winningCandidate: successful ? winner.candidateNumber : null, winnerFlakeRate: successful ? winner.flakeRate : null, fixedCode: successful ? winner.fixedCode : null, flakeRateAfter: confirmation?.flakeRate ?? null, totalRunsAfter: confirmation?.totalRuns ?? 0, failuresAfter: confirmation?.failures ?? 0, success: successful, failureReason: successful ? null : diagnosisError || 'No candidate completed a zero-failure confirmation run; the original test was restored.' };
+  const report = { namespace, targetTest: targetArgument, testName: targetArgument, status, iterations: attemptHistory.length, candidatesConsidered: 2, diagnosis: finalDiagnosis ? { cause: finalDiagnosis.cause, explanation: finalDiagnosis.explanation } : null, confidence: finalDiagnosis?.confidence || null, flakeRateBefore: baseline.flakeRate, totalRunsBefore: baseline.totalRuns, failuresBefore: baseline.failures, runResults: baseline.runResults, originalCode, attemptHistory, winningCandidate: successful ? winner.candidateNumber : null, winnerFlakeRate: successful ? winner.flakeRate : null, fixedCode: successful ? winner.fixedCode : null, flakeRateAfter: confirmation?.flakeRate ?? null, totalRunsAfter: confirmation?.totalRuns ?? 0, failuresAfter: confirmation?.failures ?? 0, success: successful, failureReason: status === 'stable' || successful ? null : diagnosisError || 'No candidate completed a zero-failure confirmation run; the original test was restored.' };
   writeJson(names.final, report); writeJson(`${namespace}-verify-summary.json`, { iterations: report.iterations, candidatesConsidered: 2, confidence: report.confidence, finalCause: report.diagnosis?.cause || null, finalExplanation: report.diagnosis?.explanation || null, success: successful }); if (namespace === 'verify') writeJson('results.json', report);
-  console.log(`Verification ${successful ? 'succeeded' : 'did not verify a fix'}; results written to ${names.final}.`); return report;
+  console.log(status === 'stable' ? `Verification found the test already stable; results written to ${names.final}.` : `Verification ${successful ? 'succeeded' : 'did not verify a fix'}; results written to ${names.final}.`); return report;
 }
 module.exports = { main };
 if (require.main === module) main().catch((error) => { console.error(`Verification loop failed: ${error.message}`); process.exitCode = 1; });
